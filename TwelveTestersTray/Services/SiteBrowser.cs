@@ -36,13 +36,19 @@ public sealed class SiteBrowser : IDisposable
     {
         var environment = await EnvironmentTask;
         if (disposed) throw new ObjectDisposedException(nameof(SiteBrowser));
+        // Must count as visible or WebView2 suspends rendering and the client-side site never fills in (0 sessions).
+        // Like the old form: a real popup parked far off-screen, hidden from the taskbar, never activated.
         host = new HwndSource(new HwndSourceParameters("Twelve Testers site browser")
-        { Width = 1500, Height = 950, WindowStyle = unchecked((int)0x80000000) });
+        {
+            Width = 1500, Height = 950, PositionX = -30000, PositionY = -30000,
+            WindowStyle = unchecked((int)0x90000000),           // WS_POPUP | WS_VISIBLE
+            ExtendedWindowStyle = 0x00000080 | 0x08000000        // WS_EX_TOOLWINDOW | WS_EX_NOACTIVATE
+        });
         var created = await environment.CreateCoreWebView2ControllerAsync(host.Handle);
         if (disposed) { created.Close(); throw new ObjectDisposedException(nameof(SiteBrowser)); }
         controller = created;
         controller.Bounds = new System.Drawing.Rectangle(0, 0, 1500, 950);
-        controller.IsVisible = false;
+        controller.IsVisible = true;
         core = controller.CoreWebView2;
         core.Settings.AreDefaultScriptDialogsEnabled = false;
         core.ScriptDialogOpening += (_, e) => { if (e.Kind == CoreWebView2ScriptDialogKind.Beforeunload) e.Accept(); };

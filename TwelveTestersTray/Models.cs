@@ -45,8 +45,43 @@ public class Settings
         if (TestedLog.TryGetValue(DateTime.Today.ToString("yyyy-MM-dd"), out var l) && l.Remove(sessionUrl)) Save();
     }
 
-    public static string Dir => Path.Combine(
+    /// <summary>All app data lives under this root (settings, login, log, WebView2 profile, screenshots).</summary>
+    public const string DataRoot = @"C:\bDevStudios\00_Backups\TwelveTesters";
+    public static string Dir => Path.Combine(DataRoot, "AppData");
+    public static string ScreenshotsDir => Path.Combine(DataRoot, "Screenshots");
+
+    static string LegacyDir => Path.Combine(
         Environment.GetFolderPath(Environment.SpecialFolder.LocalApplicationData), "TwelveTestersTray");
+
+    /// <summary>One-time copy (never a move) of the old %LOCALAPPDATA% data. settings.json is copied last,
+    /// so an interrupted copy is retried on the next start.</summary>
+    static Settings()
+    {
+        try
+        {
+            if (File.Exists(Path.Combine(Dir, "settings.json")) || !Directory.Exists(LegacyDir)) return;
+            Directory.CreateDirectory(Dir);
+            Directory.CreateDirectory(ScreenshotsDir);
+            CopyTree(Path.Combine(LegacyDir, "captures"), ScreenshotsDir);
+            CopyTree(Path.Combine(LegacyDir, "WebView2"), Path.Combine(Dir, "WebView2"));
+            foreach (var name in new[] { "login.dat", "log.txt", "settings.json" })
+                if (File.Exists(Path.Combine(LegacyDir, name)))
+                    File.Copy(Path.Combine(LegacyDir, name), Path.Combine(Dir, name), overwrite: false);
+        }
+        catch { /* start with defaults; the old data is untouched */ }
+    }
+
+    static void CopyTree(string from, string to)
+    {
+        if (!Directory.Exists(from)) return;
+        Directory.CreateDirectory(to);
+        foreach (var file in Directory.EnumerateFiles(from, "*", SearchOption.AllDirectories))
+        {
+            var target = Path.Combine(to, Path.GetRelativePath(from, file));
+            Directory.CreateDirectory(Path.GetDirectoryName(target)!);
+            try { if (!File.Exists(target)) File.Copy(file, target); } catch (IOException) { /* locked, e.g. a live browser profile */ }
+        }
+    }
 
     static string FilePath => Path.Combine(Dir, "settings.json");
 

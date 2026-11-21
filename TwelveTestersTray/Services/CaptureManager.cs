@@ -25,7 +25,7 @@ public class CaptureManager
     readonly SynchronizationContext? ui;
 
     public static readonly TimeSpan MaxRun = TimeSpan.FromMinutes(45);
-    public static string Root => Path.Combine(Settings.Dir, "captures");
+    public static string Root => Settings.ScreenshotsDir;
 
     public CaptureRun? Current { get; private set; }
 
