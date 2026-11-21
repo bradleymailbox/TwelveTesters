@@ -1,0 +1,15 @@
+<Window x:Class="TwelveTestersTray.MainWindow"
+        xmlns="http://schemas.microsoft.com/winfx/2006/xaml/presentation"
+        xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
+        Title="Twelve Testers Tray" Icon="app.ico"
+        Width="680" Height="440" MinWidth="500" MinHeight="320"
+        WindowStartupLocation="CenterScreen">
+    <Grid Margin="32">
+        <StackPanel VerticalAlignment="Center" HorizontalAlignment="Center" MaxWidth="460">
+            <TextBlock Text="Twelve Testers Tray" FontSize="27" FontWeight="SemiBold" HorizontalAlignment="Center" />
+            <TextBlock Text="Your current testing tools are available from the tray. The unified pages are planned for the next upgrade."
+                       TextWrapping="Wrap" TextAlignment="Center" Margin="0,18,0,24" />
+            <Button Content="Open today's tasks" Padding="18,9" HorizontalAlignment="Center" Click="OpenTasks_Click" />
+        </StackPanel>
+    </Grid>
+</Window>

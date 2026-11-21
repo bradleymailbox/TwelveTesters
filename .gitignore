@@ -1,0 +1,20 @@
+# Build output
+bin/
+obj/
+artifacts/
+publish/
+
+# IDE
+.vs/
+.vscode/
+*.user
+*.suo
+
+# OS / tools
+Thumbs.db
+.DS_Store
+__pycache__/
+
+# Local snapshots and sample captures
+backups/
+screenshots/
