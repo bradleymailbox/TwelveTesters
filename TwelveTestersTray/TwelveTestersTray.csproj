@@ -9,8 +9,8 @@
     <ImplicitUsings>enable</ImplicitUsings>
     <AssemblyName>TwelveTestersTray</AssemblyName>
     <RootNamespace>TwelveTestersTray</RootNamespace>
-    <Product>Twelve Testers Tray</Product>
-    <AssemblyTitle>Twelve Testers Tray</AssemblyTitle>
+    <Product>Twelve Testers Test Management</Product>
+    <AssemblyTitle>Twelve Testers Test Management</AssemblyTitle>
     <Company>bDevStudios</Company>
     <Version>1.0.0</Version>
     <ApplicationIcon>app.ico</ApplicationIcon>
@@ -26,6 +26,7 @@
     <Using Remove="System.Windows.Forms" />
     <Using Remove="System.Drawing" />
     <Resource Include="app.ico" />
+    <Resource Include="Assets\*.png" />
     <Resource Include="Fonts\*.ttf" />
   </ItemGroup>
 

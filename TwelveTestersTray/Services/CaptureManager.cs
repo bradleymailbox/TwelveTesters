@@ -44,25 +44,45 @@ public class CaptureManager
     public bool IsRunning(SessionInfo s) => Current is { Running: true } c && c.Session.Url == s.Url;
 
     static string SessionId(SessionInfo s) => s.Url.TrimEnd('/').Split('/').Last();
-    public static string FolderFor(SessionInfo s) => Path.Combine(Root, SessionId(s));
+
+    /// <summary>Screenshots are filed per app: Screenshots\&lt;App name&gt;\... (falls back to the session id if the name is unusable).</summary>
+    public static string FolderFor(SessionInfo s) => Path.Combine(Root, AppFolderName(s));
+
+    /// <summary>Where screenshots were filed before they were grouped by app name (still read, never moved).</summary>
+    static string LegacyFolderFor(SessionInfo s) => Path.Combine(Root, SessionId(s));
+
+    internal static string AppFolderName(SessionInfo s)
+    {
+        var name = string.Concat((s.App ?? "").Trim().Select(c => Path.GetInvalidFileNameChars().Contains(c) ? '_' : c)).Trim().TrimEnd('.', ' ');
+        if (name.Length > 60) name = name[..60].TrimEnd('.', ' ');
+        var reserved = new[] { "CON", "PRN", "AUX", "NUL", "COM1", "COM2", "COM3", "COM4", "LPT1", "LPT2", "LPT3" };
+        if (name.Length == 0 || reserved.Contains(name.ToUpperInvariant())) return SessionId(s);
+        return name;
+    }
 
     /// <summary>All captured screenshots for an app, newest first.</summary>
     public static List<string> ShotsFor(SessionInfo s, int max = 80)
     {
-        var dir = FolderFor(s);
-        if (!Directory.Exists(dir)) return new();
-        return new DirectoryInfo(dir).EnumerateFiles("*.png", SearchOption.AllDirectories)
-            .OrderByDescending(f => f.LastWriteTime).Take(max).Select(f => f.FullName).ToList();
+        var files = new List<FileInfo>();
+        foreach (var dir in new[] { FolderFor(s), LegacyFolderFor(s) }.Distinct(StringComparer.OrdinalIgnoreCase))
+            if (Directory.Exists(dir))
+                files.AddRange(new DirectoryInfo(dir).EnumerateFiles("*.png", SearchOption.AllDirectories));
+        return files.OrderByDescending(f => f.LastWriteTime).Take(max).Select(f => f.FullName).ToList();
     }
 
+    /// <summary>Deletes screenshots older than <paramref name="days"/> (judged per file, so a recent shot is never
+    /// lost because its folder looks old), then removes folders left empty.</summary>
     public static void CleanupOld(int days = 30)
     {
         try
         {
             if (!Directory.Exists(Root)) return;
+            var cutoff = DateTime.Now.AddDays(-days);
+            foreach (var f in new DirectoryInfo(Root).EnumerateFiles("*", SearchOption.AllDirectories).Where(f => f.LastWriteTime < cutoff).ToList())
+                try { f.Delete(); } catch { }
             foreach (var d in new DirectoryInfo(Root).EnumerateDirectories("*", SearchOption.AllDirectories)
-                         .Where(d => d.LastWriteTime < DateTime.Now.AddDays(-days)).ToList())
-                try { d.Delete(true); } catch { }
+                         .OrderByDescending(d => d.FullName.Length).ToList())
+                try { if (!d.EnumerateFileSystemInfos().Any()) d.Delete(); } catch { }
         }
         catch { }
     }

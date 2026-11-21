@@ -13,6 +13,8 @@ public class TrayContext : ApplicationContext
     public Settings Settings => settings;
     public Snapshot? Snapshot => last;
     public IReadOnlyList<TodoItem> Todos => todos;
+    /// <summary>How many current to-do items are hidden because you dismissed them.</summary>
+    public int HiddenTodoCount { get; private set; }
     public CaptureManager Capture => capture;
     public AdbService Adb => adb;
     public string? Error => lastError;
@@ -34,7 +36,7 @@ public class TrayContext : ApplicationContext
     readonly System.Windows.Forms.Timer phoneTimer = new() { Interval = 60_000 };
     readonly AsyncRelayCommand phoneCommand;
     readonly AsyncRelayCommand checkCommand;
-    (string Page, SessionInfo? Session) balloonTarget = ("Today", null);
+    (string Page, SessionInfo? Session, bool AutoStart) balloonTarget = ("Today", null, false);
     readonly Settings settings = Settings.Load();
 
     Snapshot? last;
@@ -65,7 +67,7 @@ public class TrayContext : ApplicationContext
         tray.BalloonTipClicked += (_, _) =>
         {
             if (System.Windows.Application.Current.MainWindow is MainWindow window)
-                window.ShowFromTray(balloonTarget.Page, balloonTarget.Session);
+                window.ShowFromTray(balloonTarget.Page, balloonTarget.Session, balloonTarget.AutoStart);
         };
 
 
@@ -77,9 +79,16 @@ public class TrayContext : ApplicationContext
         phoneTimer.Start();
         capture.EndedAutomatically += run =>
         {
-            Balloon($"Testing {run.Session.App} stopped",
-                $"{run.Problem} {run.Count} screenshot(s) saved — open Testing for follow-up actions.");
-            balloonTarget = ("Testing", run.Session);
+            var message = $"Testing {run.Session.App} stopped. {run.Problem} {run.Count} screenshot(s) saved.";
+            var window = System.Windows.Application.Current.MainWindow as MainWindow;
+            if (window is { IsVisible: true, WindowState: not System.Windows.WindowState.Minimized })
+                window.ShowRunEnded(run.Session, message);
+            if (window is not { IsInFront: true }) // balloon only when the user isn't looking at the window
+            {
+                Balloon($"Testing {run.Session.App} stopped",
+                    $"{run.Problem} {run.Count} screenshot(s) saved — click to choose what to do next.");
+                balloonTarget = ("Testing", run.Session, false);
+            }
             StateChanged?.Invoke();
         };
         capture.Changed += _ => StateChanged?.Invoke();
@@ -146,9 +155,9 @@ public class TrayContext : ApplicationContext
 
     public void ApplySettings() => ApplyInterval();
     public void RefreshFromSettings() => RebuildTodos();
-    public void ShowNotice(string text)
+    public void ShowNotice(string text, bool confirmExit = false, string? actionText = null, Action? action = null)
     {
-        if (System.Windows.Application.Current.MainWindow is MainWindow window) window.ShowNotice(text);
+        if (System.Windows.Application.Current.MainWindow is MainWindow window) window.ShowNotice(text, confirmExit, actionText, action);
     }
     public void OnHiddenToTray()
     {
@@ -234,7 +243,7 @@ public class TrayContext : ApplicationContext
             if (snap.LoginError != null) loginFailed = true;
             last = snap;
             lastError = null;
-            var newTodos = TodoBuilder.Build(snap);
+            var newTodos = BuildTodos(snap, fullCheck: true);
             Notify(newTodos);
             todos = newTodos;
         }
@@ -289,7 +298,7 @@ public class TrayContext : ApplicationContext
 
     void Balloon(string title, string text)
     {
-        balloonTarget = ("Today", null);
+        balloonTarget = ("Today", null, false);
         tray.BalloonTipTitle = title;
         tray.BalloonTipText = text;
         tray.BalloonTipIcon = ToolTipIcon.Info;
@@ -370,9 +379,42 @@ public class TrayContext : ApplicationContext
     {
         if (last == null) return;
         last.ConfirmedToday = settings.ConfirmedOn(DateTime.Today);
-        todos = TodoBuilder.Build(last);
+        todos = BuildTodos(last, fullCheck: false);
         seenKeys.UnionWith(todos.Select(t => t.Key)); // confirmations shouldn't trigger "new" popups
         Refresh();
+    }
+
+    /// <summary>Builds the to-do list without the items the user dismissed. A dismissal is dropped (so the item can
+    /// return) when its priority or title changed, or — after a full site check — when the item is gone, so it shows
+    /// again if the same situation comes back later.</summary>
+    List<TodoItem> BuildTodos(Snapshot snap, bool fullCheck)
+    {
+        var all = TodoBuilder.Build(snap);
+        var (visible, changed) = TodoBuilder.ApplyDismissals(all, settings.DismissedTodos, fullCheck, snap.SignedIn);
+        if (changed) settings.Save();
+        HiddenTodoCount = all.Count - visible.Count;
+        return visible;
+    }
+
+    /// <summary>Marks a to-do as done: hidden until it goes away or changes.</summary>
+    public void DismissTodo(TodoItem item)
+    {
+        settings.DismissedTodos[item.Key] = TodoBuilder.Fingerprint(item);
+        settings.Save();
+        RebuildTodos();
+        ShowNotice($"Dismissed \"{item.Title}\". It comes back if it changes.", false, "Undo", () => RestoreTodo(item.Key));
+    }
+
+    public void RestoreTodo(string key)
+    {
+        if (settings.DismissedTodos.Remove(key)) settings.Save();
+        RebuildTodos();
+    }
+
+    public void RestoreAllTodos()
+    {
+        if (settings.DismissedTodos.Count > 0) { settings.DismissedTodos.Clear(); settings.Save(); }
+        RebuildTodos();
     }
 
     // ----------------------------------------------------- testing & feedback
@@ -428,10 +470,15 @@ public class TrayContext : ApplicationContext
             if (setup.Count > 0)
             {
                 var x = setup[0];
-                Balloon($"{x.App} is installed",
-                    "Click here to upload the install screenshot (Day 1 check-in)." +
-                    (setup.Count > 1 ? $" {setup.Count - 1} more new install(s) are in the menu." : ""));
-                balloonTarget = ("Checkin", x);
+                var more = setup.Count > 1 ? $" {setup.Count - 1} more new install(s) are on Today." : "";
+                if (System.Windows.Application.Current.MainWindow is MainWindow { IsInFront: true } window)
+                    window.ShowNotice($"{x.App} is installed on the phone. Take the Day 1 check-in screenshot now.{more}", false,
+                        "Capture screenshot", () => window.ShowFromTray("Checkin", x, autoStart: true));
+                else
+                {
+                    Balloon($"{x.App} is installed", "Click to open the app on the phone and capture the Day 1 check-in screenshot." + more);
+                    balloonTarget = ("Checkin", x, true);
+                }
             }
         }
         catch (Exception ex) { Log.Write("Phone refresh failed: " + ex.Message); }

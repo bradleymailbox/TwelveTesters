@@ -25,10 +25,86 @@ internal static class PageUi
     public static TextBlock Text(string value, int size = 14) =>
         new() { Text = value, TextWrapping = TextWrapping.Wrap, FontSize = size, Margin = new Thickness(0, 0, 0, 8) };
 
-    public static Button Button(string label, Action action)
+    /// <summary>Opens Explorer with the file selected (or its folder if the file is gone).</summary>
+    public static void OpenFolder(string file)
     {
-        var button = new Button { Content = label, Padding = new Thickness(12, 6, 12, 6), Margin = new Thickness(0, 0, 8, 8), MinWidth = 90 };
+        try
+        {
+            if (File.Exists(file)) Process.Start(new ProcessStartInfo("explorer.exe") { Arguments = $"/select,\"{file}\"", UseShellExecute = false });
+            else if (System.IO.Path.GetDirectoryName(file) is { } dir && Directory.Exists(dir)) Process.Start(new ProcessStartInfo(dir) { UseShellExecute = true });
+        }
+        catch (Exception ex) when (ex is System.ComponentModel.Win32Exception or InvalidOperationException) { /* Explorer unavailable */ }
+    }
+
+    public static bool CopyText(string text)
+    {
+        try { System.Windows.Clipboard.SetText(text); return true; }
+        catch (System.Runtime.InteropServices.COMException) { return false; /* clipboard busy */ }
+    }
+
+    /// <summary>Colours a button by meaning: success (green), danger (red), info (cyan), warn (amber), accent (orange).</summary>
+    public static void Tint(Button button, string? tint)
+    {
+        var brush = tint switch { "success" => "SuccessBrush", "danger" => "ErrorBrush", "info" => "CyanBrush", "warn" => "WarningBrush", "accent" => "OrangeBrush", _ => null };
+        if (brush == null) return;
+        button.SetResourceReference(FrameworkElement.StyleProperty, "TintButton");
+        button.SetResourceReference(System.Windows.Controls.Control.ForegroundProperty, brush);
+    }
+
+    /// <summary>Tints chosen options and "On" toggles green so the current setting stands out.</summary>
+    public static void TintSelected(System.Windows.Controls.Panel panel)
+    {
+        foreach (var button in panel.Children.OfType<Button>())
+            if (button.Content is string text && (text.EndsWith("✓") || text.EndsWith(": On"))) Tint(button, "success");
+    }
+
+    /// <summary>A collapsible section: clickable header (▾/▸, title, count) plus a content panel. The open/closed
+    /// state is remembered in settings. Returns the panel to fill.</summary>
+    public static StackPanel AddSection(System.Windows.Controls.Panel parent, Settings settings, string key, string title, int? count = null)
+    {
+        var content = new StackPanel();
+        var arrow = new TextBlock { VerticalAlignment = VerticalAlignment.Center, Margin = new Thickness(0, 0, 8, 0), FontSize = 13 };
+        arrow.SetResourceReference(TextBlock.ForegroundProperty, "CyanBrush");
+        var label = new TextBlock { Text = title, VerticalAlignment = VerticalAlignment.Center };
+        label.SetResourceReference(FrameworkElement.StyleProperty, "SectionLabel");
+        label.Margin = new Thickness(0);
+        var header = new StackPanel { Orientation = System.Windows.Controls.Orientation.Horizontal };
+        header.Children.Add(arrow);
+        header.Children.Add(label);
+        if (count != null)
+        {
+            var badge = new TextBlock { Text = count.ToString(), Margin = new Thickness(8, 0, 0, 0), VerticalAlignment = VerticalAlignment.Center, FontSize = 12 };
+            badge.SetResourceReference(TextBlock.ForegroundProperty, "MutedBrush");
+            header.Children.Add(badge);
+        }
+        var button = new Button { Content = header, HorizontalAlignment = System.Windows.HorizontalAlignment.Left, Margin = new Thickness(0, 12, 0, 4),
+            Padding = new Thickness(4, 2, 10, 2), MinWidth = 0, ToolTip = "Click to collapse or expand" };
+        button.SetResourceReference(FrameworkElement.StyleProperty, "GhostButton");
+        System.Windows.Automation.AutomationProperties.SetName(button, title);
+        void Apply()
+        {
+            var collapsed = settings.CollapsedSections.Contains(key);
+            arrow.Text = collapsed ? "▸" : "▾";
+            content.Visibility = collapsed ? Visibility.Collapsed : Visibility.Visible;
+        }
+        button.Click += (_, _) =>
+        {
+            if (!settings.CollapsedSections.Remove(key)) settings.CollapsedSections.Add(key);
+            settings.Save();
+            Apply();
+        };
+        Apply();
+        parent.Children.Add(button);
+        parent.Children.Add(content);
+        return content;
+    }
+
+    public static Button Button(string label, Action action, string? tint = null)
+    {
+        var button = new Button { Content = label, Padding = new Thickness(12, 6, 12, 6), Margin = new Thickness(0, 0, 8, 8), MinWidth = 90,
+            HorizontalAlignment = System.Windows.HorizontalAlignment.Left };
         button.Click += (_, _) => action();
+        Tint(button, tint);
         return button;
     }
 
@@ -36,7 +112,7 @@ internal static class PageUi
     {
         var border = new Border
         {
-            Child = child, BorderThickness = new Thickness(1), CornerRadius = new CornerRadius(10),
+            Child = child, BorderThickness = new Thickness(1), CornerRadius = new CornerRadius(12),
             Padding = new Thickness(16), Margin = new Thickness(0, 0, 0, 12)
         };
         border.SetResourceReference(Border.StyleProperty, "Card");
@@ -45,7 +121,59 @@ internal static class PageUi
         return border;
     }
 
-    public static ScrollViewer Scroll(StackPanel content) => new() { Content = content, VerticalScrollBarVisibility = ScrollBarVisibility.Auto };
+    /// <summary>Scrolling page body, left-aligned and capped at a readable width so fields and cards don't span a wide window.</summary>
+    public static ScrollViewer Scroll(StackPanel content, double maxWidth = 980)
+    {
+        var column = new Grid();
+        column.ColumnDefinitions.Add(new ColumnDefinition { Width = new GridLength(1, GridUnitType.Star), MaxWidth = maxWidth });
+        column.ColumnDefinitions.Add(new ColumnDefinition { Width = new GridLength(0, GridUnitType.Auto) });
+        column.Children.Add(content);
+        return new ScrollViewer { Content = column, VerticalScrollBarVisibility = ScrollBarVisibility.Auto, Padding = new Thickness(0, 0, 12, 0) };
+    }
+
+    /// <summary>Tight card for list rows (Today, Testing).</summary>
+    public static Border CompactCard(UIElement child)
+    {
+        var border = new Border
+        {
+            Child = child, BorderThickness = new Thickness(1), CornerRadius = new CornerRadius(10),
+            Padding = new Thickness(12, 8, 12, 8), Margin = new Thickness(0, 0, 0, 6)
+        };
+        border.SetResourceReference(Border.StyleProperty, "Card");
+        border.SetResourceReference(Border.BackgroundProperty, "PanelBrush");
+        border.SetResourceReference(Border.BorderBrushProperty, "StrokeBrush");
+        border.CornerRadius = new CornerRadius(10);
+        border.Padding = new Thickness(12, 8, 12, 8);
+        return border;
+    }
+
+    /// <summary>One tight line of text (muted by default) for list rows.</summary>
+    public static TextBlock Line(string value, bool muted = true, double size = 12, FontWeight? weight = null)
+    {
+        var line = new TextBlock { Text = value, FontSize = size, TextWrapping = TextWrapping.Wrap, Margin = new Thickness(0, 1, 0, 0) };
+        if (weight != null) line.FontWeight = weight.Value;
+        line.SetResourceReference(TextBlock.ForegroundProperty, muted ? "MutedBrush" : "TextBrush");
+        return line;
+    }
+
+    /// <summary>A small button for dense rows.</summary>
+    public static Button Small(string label, Action action, string? tint = null)
+    {
+        var button = Button(label, action, tint);
+        button.Padding = new Thickness(10, 3, 10, 3);
+        button.MinWidth = 0;
+        button.FontSize = 12;
+        button.Margin = new Thickness(0, 2, 6, 2);
+        return button;
+    }
+
+    /// <summary>A small heading for a group of controls.</summary>
+    public static TextBlock Heading(string value)
+    {
+        var heading = new TextBlock { Text = value, Margin = new Thickness(0, 14, 0, 6) };
+        heading.SetResourceReference(FrameworkElement.StyleProperty, "SectionLabel");
+        return heading;
+    }
     public static MainWindow Window => (MainWindow)System.Windows.Application.Current.MainWindow;
 }
 
@@ -60,7 +188,7 @@ public sealed class TodayView : UserControl, IRefreshablePage
         this.app = app;
         model = new TodayViewModel(app);
         DataContext = model;
-        Content = PageUi.Scroll(body);
+        Content = PageUi.Scroll(body, double.PositiveInfinity);
         Refresh();
     }
 
@@ -74,8 +202,8 @@ public sealed class TodayView : UserControl, IRefreshablePage
             error.Children.Add(PageUi.Text(app.BrowserRuntimeMissing ? "WebView2 Runtime is missing" : "Couldn't refresh your tasks", 18));
             error.Children.Add(PageUi.Text(app.Error));
             if (app.BrowserRuntimeMissing)
-                error.Children.Add(PageUi.Button("Download WebView2 Runtime", () => TrayContext.OpenUrl("https://developer.microsoft.com/microsoft-edge/webview2/")));
-            var retry = PageUi.Button("Retry", () => _ = app.CheckNowAsync());
+                error.Children.Add(PageUi.Button("Download WebView2 Runtime", () => TrayContext.OpenUrl("https://developer.microsoft.com/microsoft-edge/webview2/"), "info"));
+            var retry = PageUi.Button("Retry", () => _ = app.CheckNowAsync(), "info");
             retry.IsEnabled = !app.IsChecking && !app.IsStarting;
             error.Children.Add(retry);
             body.Children.Add(PageUi.Card(error));
@@ -100,7 +228,7 @@ public sealed class TodayView : UserControl, IRefreshablePage
             login.Children.Add(PageUi.Text(app.Snapshot.LoginError != null ? "Saved login failed" : "Sign in to see today's swaps and tasks.", 18));
             if (app.Snapshot.LoginError != null)
                 login.Children.Add(PageUi.Text(app.Snapshot.LoginError + "\nAutomatic login retries are paused. Update your login or sign in manually."));
-            login.Children.Add(PageUi.Button("Fix login", () => PageUi.Window.Navigate("Account")));
+            login.Children.Add(PageUi.Button("Fix login", () => PageUi.Window.Navigate("Account"), "warn"));
             body.Children.Add(PageUi.Card(login));
             return;
         }
@@ -111,56 +239,99 @@ public sealed class TodayView : UserControl, IRefreshablePage
             phone.Children.Add(PageUi.Text(snap.Device is { AdbFound: false } ? "ADB not found" : "No phone connected", 18));
             phone.Children.Add(PageUi.Text(snap.Device?.Problem ?? "Connect and unlock your phone, enable USB debugging, and accept the USB authorization prompt."));
             phone.Children.Add(PageUi.Text("ADB path: " + (app.Adb.AdbPath ?? app.Settings.AdbPath ?? "Not configured")));
-            phone.Children.Add(PageUi.Button("Configure ADB", () => PageUi.Window.Navigate("Settings")));
-            var retry = PageUi.Button("Retry phone check", () => _ = app.CheckNowAsync());
+            phone.Children.Add(PageUi.Button("Configure ADB", () => PageUi.Window.Navigate("Settings"), "info"));
+            var retry = PageUi.Button("Retry phone check", () => _ = app.CheckNowAsync(), "info");
             retry.IsEnabled = !app.IsChecking;
             phone.Children.Add(retry);
             body.Children.Add(PageUi.Card(phone));
         }
 
-        body.Children.Add(PageUi.Text("To do", 19));
+        var todoList = PageUi.AddSection(body, app.Settings, "today.todo", "To do", app.Todos.Count);
         if (app.Error == null && !app.Todos.Any(t => t.Priority != Priority.Low))
-            body.Children.Add(PageUi.Card(PageUi.Text("All done for today ✓")));
+            todoList.Children.Add(PageUi.Card(PageUi.Text("All done for today ✓")));
         foreach (var todo in app.Todos)
         {
-            var row = new StackPanel();
-            row.Children.Add(PageUi.Text(todo.Title, 16));
-            row.Children.Add(PageUi.Text(todo.Detail));
-            row.Children.Add(PageUi.Button("Open", () => app.OpenItem(todo)));
-            body.Children.Add(PageUi.Card(row));
+            var row = new Grid();
+            row.ColumnDefinitions.Add(new ColumnDefinition { Width = new GridLength(1, GridUnitType.Star) });
+            row.ColumnDefinitions.Add(new ColumnDefinition { Width = GridLength.Auto });
+            var text = new StackPanel();
+            text.Children.Add(PageUi.Line(todo.Title, muted: false, size: 14, weight: FontWeights.SemiBold));
+            text.Children.Add(PageUi.Line(todo.Detail));
+            row.Children.Add(text);
+            var buttons = new StackPanel { Orientation = System.Windows.Controls.Orientation.Horizontal, VerticalAlignment = VerticalAlignment.Center, Margin = new Thickness(12, 0, 0, 0) };
+            buttons.Children.Add(PageUi.Small("Open", () => app.OpenItem(todo), "info"));
+            var dismiss = PageUi.Small("Dismiss", () => app.DismissTodo(todo));
+            dismiss.ToolTip = "Already done? Hide this until it changes.";
+            buttons.Children.Add(dismiss);
+            Grid.SetColumn(buttons, 1);
+            row.Children.Add(buttons);
+            todoList.Children.Add(PageUi.CompactCard(row));
+        }
+        if (app.HiddenTodoCount > 0)
+        {
+            var restore = PageUi.Small($"Show {app.HiddenTodoCount} dismissed", () => app.RestoreAllTodos());
+            restore.ToolTip = "Bring back everything you dismissed.";
+            todoList.Children.Add(restore);
         }
 
-        body.Children.Add(PageUi.Text("Swaps", 19));
+        var swapList = PageUi.AddSection(body, app.Settings, "today.swaps", "Swaps", snap.ActiveSessions.Count());
         foreach (var session in snap.ActiveSessions)
         {
-            var row = new StackPanel();
-            row.Children.Add(PageUi.Text(session.App, 18));
-            row.Children.Add(PageUi.Text($"Partner: {session.Partner}  ·  {session.DaysLeft} days left  ·  {session.MyStatus}"));
             var state = SessionCardState.From(session, snap);
-            var chipText = PageUi.Text(state.Stage);
-            chipText.Margin = new Thickness(0);
+            var row = new Grid();
+            row.ColumnDefinitions.Add(new ColumnDefinition { Width = GridLength.Auto });
+            row.ColumnDefinitions.Add(new ColumnDefinition { Width = new GridLength(1, GridUnitType.Star) });
+            row.ColumnDefinitions.Add(new ColumnDefinition { Width = GridLength.Auto });
+
+            var thumb = TodayThumbnail(session);
+            if (thumb != null) { thumb.Margin = new Thickness(0, 0, 12, 0); row.Children.Add(thumb); }
+
+            var info = new StackPanel { VerticalAlignment = VerticalAlignment.Center };
+            var header = new StackPanel { Orientation = System.Windows.Controls.Orientation.Horizontal };
+            header.Children.Add(PageUi.Line(session.App, muted: false, size: 14, weight: FontWeights.SemiBold));
+            var chipText = new TextBlock { Text = state.Stage, FontSize = 11, FontWeight = FontWeights.SemiBold };
             chipText.SetResourceReference(TextBlock.ForegroundProperty, state.BrushKey);
-            var chip = new Border { Child = chipText, HorizontalAlignment = System.Windows.HorizontalAlignment.Left };
+            var chip = new Border { Child = chipText, Margin = new Thickness(8, 1, 0, 0), Padding = new Thickness(8, 1, 8, 1), VerticalAlignment = VerticalAlignment.Center };
             chip.SetResourceReference(Border.StyleProperty, "Chip");
-            row.Children.Add(chip);
-            row.Children.Add(PageUi.Text($"Installed {state.Installed}  ·  Opened today {state.Opened}  ·  Check-in {state.Checkin}"));
-            AddTodayThumbnail(row, session);
-            var actions = new WrapPanel();
+            chip.Margin = new Thickness(8, 1, 0, 0);
+            header.Children.Add(chip);
+            info.Children.Add(header);
+            info.Children.Add(PageUi.Line($"{session.Partner}  ·  {session.DaysLeft}  ·  {session.MyStatus}"));
+            info.Children.Add(PageUi.Line($"Installed {state.Installed}  ·  Opened today {state.Opened}  ·  Check-in {state.Checkin}"));
             var packageKnown = !string.IsNullOrWhiteSpace(session.Package);
-            if (!packageKnown) row.Children.Add(PageUi.Text("Package unknown — run Check now or open the session page to finish setup."));
-            var install = PageUi.Button("Install on phone", () => _ = InstallAsync(session));
-            var start = PageUi.Button("Start testing", () => _ = StartAsync(session));
-            install.IsEnabled = start.IsEnabled = packageKnown;
-            install.ToolTip = start.ToolTip = packageKnown ? null : "The app's package name is not known yet.";
-            actions.Children.Add(install);
+            if (!packageKnown) info.Children.Add(PageUi.Line("Package unknown — run Check now or open the session page to finish setup."));
+            Grid.SetColumn(info, 1);
+            row.Children.Add(info);
+
+            var actions = new WrapPanel { MaxWidth = 700, VerticalAlignment = VerticalAlignment.Center, Margin = new Thickness(12, 0, 0, 0) };
+            // Actions follow the phone: nothing to install once the app is there, and no testing or check-in before it is.
+            var installed = state.Installed == "✓";
+            var missing = state.Installed == "✗";
+            const string installFirst = "Install the app on the phone first.";
+            if (!installed)
+            {
+                var install = PageUi.Small("Install on phone", () => _ = InstallAsync(session), "accent");
+                install.IsEnabled = packageKnown;
+                install.ToolTip = packageKnown ? null : "The app's package name is not known yet.";
+                actions.Children.Add(install);
+            }
+            var start = PageUi.Small("Start testing", () => _ = StartAsync(session), "info");
+            start.IsEnabled = packageKnown && !missing;
+            start.ToolTip = !packageKnown ? "The app's package name is not known yet." : missing ? installFirst : null;
             actions.Children.Add(start);
-            var stop = PageUi.Button("Stop", () => app.Capture.Stop());
-            stop.IsEnabled = app.Capture.IsRunning(session);
-            actions.Children.Add(stop);
-            actions.Children.Add(PageUi.Button("Check in", () => PageUi.Window.Navigate("Checkin", session)));
-            actions.Children.Add(PageUi.Button("Mark tested", () => { app.Settings.Confirm(session.Url); app.RefreshFromSettings(); }));
-            actions.Children.Add(PageUi.Button("Report", () => PageUi.Window.Navigate("Report", session)));
-            var more = PageUi.Button("⋯", () => { });
+            if (app.Capture.IsRunning(session))
+                actions.Children.Add(PageUi.Small("Stop", () => { app.Capture.Stop(); PageUi.Window.Navigate("Testing", session); }, "danger"));
+            var dayOne = state.Stage == "Day 1 check-in";
+            var checkIn = PageUi.Small(dayOne ? "Capture & check in" : "Check in", () => PageUi.Window.Navigate("Checkin", session, autoStart: true), dayOne ? "success" : "warn");
+            checkIn.IsEnabled = !missing;
+            checkIn.ToolTip = missing ? installFirst : "Opens the app on the phone and takes the screenshot for the check-in.";
+            actions.Children.Add(checkIn);
+            actions.Children.Add(PageUi.Small("Mark tested", () => { app.Settings.Confirm(session.Url); app.RefreshFromSettings(); }, "success"));
+            actions.Children.Add(PageUi.Small("Report", () => PageUi.Window.Navigate("Report", session)));
+            var shot = PageUi.Small("Screenshot", () => _ = ScreenshotAsync(session), "info");
+            shot.ToolTip = "Capture what is on the phone screen now, save it in this app's folder and copy its path.";
+            actions.Children.Add(shot);
+            var more = PageUi.Small("⋯", () => { });
             var menu = new ContextMenu();
             var sessionLink = new MenuItem { Header = "Open session page" };
             sessionLink.Click += (_, _) => TrayContext.OpenUrl(session.Url);
@@ -170,27 +341,28 @@ public sealed class TodayView : UserControl, IRefreshablePage
             menu.Items.Add(unmark);
             more.Click += (_, _) => menu.IsOpen = true;
             actions.Children.Add(more);
+            Grid.SetColumn(actions, 2);
             row.Children.Add(actions);
-            var card = PageUi.Card(row);
+
+            var card = PageUi.CompactCard(row);
             card.SetResourceReference(Border.BorderBrushProperty, state.BrushKey);
-            body.Children.Add(card);
+            swapList.Children.Add(card);
         }
     }
 
-    private static void AddTodayThumbnail(StackPanel row, SessionInfo session)
+    private static Image? TodayThumbnail(SessionInfo session)
     {
         try
         {
             var path = CaptureManager.ShotsFor(session).FirstOrDefault(p => File.GetLastWriteTime(p).Date == DateTime.Today);
-            if (path == null) return;
-            var source = new ImagePathConverter().Convert(path, typeof(ImageSource), "180", System.Globalization.CultureInfo.CurrentCulture) as ImageSource;
-            if (source == null) return;
-            row.Children.Add(new Image { Source = source, Height = 140, Stretch = Stretch.Uniform,
-                HorizontalAlignment = System.Windows.HorizontalAlignment.Left, ToolTip = "Today's latest capture" });
-            row.Children.Add(PageUi.Text($"Latest capture today · {File.GetLastWriteTime(path):HH:mm}"));
+            if (path == null) return null;
+            var source = new ImagePathConverter().Convert(path, typeof(ImageSource), "120", System.Globalization.CultureInfo.CurrentCulture) as ImageSource;
+            if (source == null) return null;
+            return new Image { Source = source, Height = 60, Stretch = Stretch.Uniform, VerticalAlignment = VerticalAlignment.Center,
+                ToolTip = $"Latest capture today · {File.GetLastWriteTime(path):HH:mm}" };
         }
         catch (Exception ex) when (ex is IOException or UnauthorizedAccessException or NotSupportedException or System.IO.FileFormatException)
-        { /* A missing or incomplete image must not prevent the app card from rendering. */ }
+        { return null; /* A missing or incomplete image must not prevent the app card from rendering. */ }
     }
 
     private async Task StartAsync(SessionInfo session)
@@ -198,6 +370,15 @@ public sealed class TodayView : UserControl, IRefreshablePage
         var error = await app.Capture.StartAsync(session);
         if (error != null) app.ShowNotice(error);
         else PageUi.Window.ShowFromTray("Testing");
+    }
+
+    private async Task ScreenshotAsync(SessionInfo session)
+    {
+        var (file, error) = await app.Capture.CaptureNowAsync(session);
+        if (file == null) { app.ShowNotice(error ?? "Couldn't capture the phone screen."); return; }
+        var copied = PageUi.CopyText(file);
+        PageUi.Window.ShowNotice($"Screenshot of {session.App} saved:\n{file}\n{(copied ? "The path is copied to the clipboard." : "Use Open folder to find it.")}",
+            false, "Open folder", () => PageUi.OpenFolder(file));
     }
 
     private async Task InstallAsync(SessionInfo session)
@@ -220,7 +401,7 @@ public sealed class TestingView : UserControl, IRefreshablePage
         this.app = app;
         model = new TestingViewModel(app);
         DataContext = model;
-        Content = PageUi.Scroll(body);
+        Content = PageUi.Scroll(body, double.PositiveInfinity);
         ticker.Tick += (_, _) => { if (IsVisible) Refresh(); };
         ticker.Start();
         app.Capture.Changed += _ => Refresh();
@@ -234,24 +415,29 @@ public sealed class TestingView : UserControl, IRefreshablePage
         var run = model.Run;
         if (run == null) { body.Children.Add(PageUi.Card(PageUi.Text("Choose an app on Today to start testing."))); return; }
         var elapsed = (run.Ended ?? DateTime.Now) - run.Started;
-        body.Children.Add(PageUi.Text(run.Session.App, 20));
-        body.Children.Add(PageUi.Card(PageUi.Text($"{(run.Running ? "Testing" : "Stopped")}  ·  {elapsed:mm\\:ss} / 45:00  ·  {run.Count} screenshot(s)")));
         var files = CaptureManager.ShotsFor(run.Session);
-        if (files.Count > 0)
-        {
-            var image = new Image { Source = new ImagePathConverter().Convert(files[0], typeof(ImageSource), "300", System.Globalization.CultureInfo.CurrentCulture) as ImageSource,
-                Height = 240, Stretch = Stretch.Uniform, HorizontalAlignment = System.Windows.HorizontalAlignment.Left };
-            body.Children.Add(PageUi.Card(image));
-        }
-        if (run.Running) body.Children.Add(PageUi.Button("Stop testing", () => { app.Capture.Stop(); Refresh(); }));
+        var card = new Grid();
+        card.ColumnDefinitions.Add(new ColumnDefinition { Width = GridLength.Auto });
+        card.ColumnDefinitions.Add(new ColumnDefinition { Width = new GridLength(1, GridUnitType.Star) });
+        if (files.Count > 0 && new ImagePathConverter().Convert(files[0], typeof(ImageSource), "220", System.Globalization.CultureInfo.CurrentCulture) is ImageSource source)
+            card.Children.Add(new Image { Source = source, Height = 130, Stretch = Stretch.Uniform, Margin = new Thickness(0, 0, 14, 0), VerticalAlignment = VerticalAlignment.Top });
+        var info = new StackPanel { VerticalAlignment = VerticalAlignment.Center };
+        info.Children.Add(PageUi.Line(run.Session.App, muted: false, size: 16, weight: FontWeights.SemiBold));
+        info.Children.Add(PageUi.Line($"{(run.Running ? "Testing" : "Stopped")}  ·  {elapsed:mm\\:ss} / 45:00  ·  {run.Count} screenshot(s)"));
+        var actions = new WrapPanel { Margin = new Thickness(0, 8, 0, 0) };
+        if (run.Running) actions.Children.Add(PageUi.Small("Stop testing", () => { app.Capture.Stop(); Refresh(); }, "danger"));
         else
         {
-            body.Children.Add(PageUi.Button("Mark tested", () => { app.Settings.Confirm(run.Session.Url); app.RefreshFromSettings(); }));
-            body.Children.Add(PageUi.Button("Write report", () => PageUi.Window.Navigate("Report", run.Session)));
-            body.Children.Add(PageUi.Button("Check in", () => PageUi.Window.Navigate("Checkin", run.Session)));
-            body.Children.Add(PageUi.Button("Done", () => PageUi.Window.Navigate("Today")));
-            if (run.Problem != null) body.Children.Add(PageUi.Text(run.Problem));
+            actions.Children.Add(PageUi.Small("Mark tested", () => { app.Settings.Confirm(run.Session.Url); app.RefreshFromSettings(); }, "success"));
+            actions.Children.Add(PageUi.Small("Write report", () => PageUi.Window.Navigate("Report", run.Session)));
+            actions.Children.Add(PageUi.Small("Check in", () => PageUi.Window.Navigate("Checkin", run.Session), "warn"));
+            actions.Children.Add(PageUi.Small("Done", () => PageUi.Window.Navigate("Today")));
         }
+        info.Children.Add(actions);
+        if (!run.Running && run.Problem != null) info.Children.Add(PageUi.Line(run.Problem));
+        Grid.SetColumn(info, 1);
+        card.Children.Add(info);
+        body.Children.Add(PageUi.CompactCard(card));
     }
 }
 
@@ -282,9 +468,14 @@ public sealed class ReportView : UserControl, IRefreshablePage
         sessions.SelectionChanged += (_, _) => { model.Session = sessions.SelectedItem as SessionInfo; LoadScreenshots(); };
         body.Children.Add(PageUi.Text("Choose an app to write a report for."));
         body.Children.Add(sessions);
-        var fields = new WrapPanel();
-        fields.Children.Add(type);
-        fields.Children.Add(severity);
+        var fields = new WrapPanel { Margin = new Thickness(0, 0, 0, 12) };
+        foreach (var (label, box) in new (string, FrameworkElement)[] { ("Type", type), ("Severity", severity) })
+        {
+            var group = new StackPanel { Margin = new Thickness(0, 0, 16, 0) };
+            group.Children.Add(PageUi.Text(label));
+            group.Children.Add(box);
+            fields.Children.Add(group);
+        }
         body.Children.Add(fields);
         body.Children.Add(PageUi.Text("Title"));
         body.Children.Add(title);
@@ -293,12 +484,14 @@ public sealed class ReportView : UserControl, IRefreshablePage
         body.Children.Add(deviceLine);
         body.Children.Add(PageUi.Text("Screenshots (up to 4)"));
         body.Children.Add(screenshots);
-        body.Children.Add(PageUi.Button("Add file", AddFile));
-        body.Children.Add(PageUi.Button("Review and submit", ReviewSubmit));
-        confirmSend = PageUi.Button("Confirm submission", () => _ = SubmitAsync());
+        var reportActions = new WrapPanel { Margin = new Thickness(0, 4, 0, 0) };
+        body.Children.Add(reportActions);
+        reportActions.Children.Add(PageUi.Button("Add file", AddFile));
+        reportActions.Children.Add(PageUi.Button("Review and submit", ReviewSubmit, "info"));
+        confirmSend = PageUi.Button("Confirm submission", () => _ = SubmitAsync(), "success");
         confirmSend.Visibility = Visibility.Collapsed;
-        body.Children.Add(confirmSend);
-        body.Children.Add(PageUi.Button("Open site form instead", () => { if (model.Session != null) TrayContext.OpenUrl(model.Session.FeedbackUrl); }));
+        reportActions.Children.Add(confirmSend);
+        reportActions.Children.Add(PageUi.Button("Open site form instead", () => { if (model.Session != null) TrayContext.OpenUrl(model.Session.FeedbackUrl); }));
         body.Children.Add(status);
         Refresh();
     }
@@ -322,13 +515,25 @@ public sealed class ReportView : UserControl, IRefreshablePage
         files.Clear();
         screenshots.Children.Clear();
         if (model.Session == null) return;
-        foreach (var path in CaptureManager.ShotsFor(model.Session)) AddShot(path);
+        // After a testing run, pre-tick that run's screenshots (newest first, at most four);
+        // with no run for this app, fall back to the newest screenshots.
+        var run = app.Capture.Current is { } current && current.Session.Url == model.Session.Url ? current : null;
+        runFolder = run?.Folder;
+        var all = CaptureManager.ShotsFor(model.Session);
+        var runHasShots = all.Any(IsFromRun);
+        if (runHasShots) all = all.Where(IsFromRun).Concat(all.Where(p => !IsFromRun(p))).ToList();
+        foreach (var path in all) AddShot(path, tick: !runHasShots || IsFromRun(path));
     }
 
-    private void AddShot(string path)
+    private string? runFolder;
+    private bool IsFromRun(string path) =>
+        runFolder != null && path.StartsWith(runFolder + System.IO.Path.DirectorySeparatorChar, StringComparison.OrdinalIgnoreCase);
+
+    private void AddShot(string path, bool tick = true)
     {
         if (files.Any(x => x.Path == path)) return;
-        var check = new CheckBox { Content = System.IO.Path.GetFileName(path), IsChecked = files.Count(x => x.Box.IsChecked == true) < 4,
+        var check = new CheckBox { Content = System.IO.Path.GetFileName(path),
+            IsChecked = tick && files.Count(x => x.Box.IsChecked == true) < 4,
             Margin = new Thickness(0, 4, 0, 4) };
         check.Checked += (_, _) =>
         {
@@ -418,6 +623,9 @@ public sealed class CheckinView : UserControl, IRefreshablePage
     private readonly Button uploadButton;
     private readonly Button confirmButton;
     private readonly Button pickButton;
+    private readonly Button captureScreenButton;
+    private readonly TextBox pathBox = new() { IsReadOnly = true, Margin = new Thickness(0, 0, 0, 6) };
+    private readonly StackPanel pathPanel = new() { Visibility = Visibility.Collapsed, Margin = new Thickness(0, 6, 0, 0) };
     private string? file;
     private DateTime capturedAt;
     private bool busy;
@@ -433,18 +641,33 @@ public sealed class CheckinView : UserControl, IRefreshablePage
         body.Children.Add(PageUi.Text("Capture a fresh screenshot and confirm the site's check-in."));
         body.Children.Add(sessions);
         body.Children.Add(joined);
-        captureButton = PageUi.Button("Capture on phone / start daily check-in", () => _ = CaptureAsync());
-        body.Children.Add(captureButton);
+        var capture = new WrapPanel();
+        body.Children.Add(capture);
+        captureButton = PageUi.Button("Capture on phone / start daily check-in", () => _ = CaptureAsync(), "info");
+        capture.Children.Add(captureButton);
+        captureScreenButton = PageUi.Button("Capture phone screenshot", () => _ = CaptureScreenAsync(), "info");
+        captureScreenButton.ToolTip = "Capture whatever is on the phone screen now.";
+        capture.Children.Add(captureScreenButton);
         pickButton = PageUi.Button("Use image file", PickFile);
-        body.Children.Add(pickButton);
+        capture.Children.Add(pickButton);
+        capture.Children.Add(PageUi.Button("Open session page", () => { if (model.Session != null) TrayContext.OpenUrl(model.Session.Url); }));
         body.Children.Add(preview);
         body.Children.Add(status);
+        pathPanel.Children.Add(PageUi.Text("Screenshot file — choose this in the site's upload dialog:"));
+        pathPanel.Children.Add(pathBox);
+        var pathActions = new WrapPanel();
+        pathActions.Children.Add(PageUi.Button("Open folder", () => { if (file != null) PageUi.OpenFolder(file); }, "info"));
+        pathActions.Children.Add(PageUi.Button("Copy path", () => { if (file != null) details.Text = PageUi.CopyText(file) ? "Path copied to the clipboard." : "Couldn't use the clipboard."; }));
+        pathPanel.Children.Add(pathActions);
+        body.Children.Add(pathPanel);
         body.Children.Add(details);
-        uploadButton = PageUi.Button("Check screenshot", () => _ = UploadAsync());
-        confirmButton = PageUi.Button("Confirm check-in", () => _ = ConfirmAsync());
-        body.Children.Add(uploadButton);
-        body.Children.Add(confirmButton);
-        body.Children.Add(PageUi.Button("Try another screenshot", Reset));
+        var steps = new WrapPanel();
+        body.Children.Add(steps);
+        uploadButton = PageUi.Button("Check screenshot", () => _ = UploadAsync(), "info");
+        confirmButton = PageUi.Button("Confirm check-in", () => _ = ConfirmAsync(), "success");
+        steps.Children.Add(uploadButton);
+        steps.Children.Add(confirmButton);
+        steps.Children.Add(PageUi.Button("Try another screenshot", Reset));
         sessions.SelectionChanged += (_, _) =>
         {
             if (busy) return;
@@ -456,7 +679,15 @@ public sealed class CheckinView : UserControl, IRefreshablePage
         Refresh();
     }
 
-    public void Select(SessionInfo session) { Refresh(); sessions.SelectedItem = session; }
+    /// <param name="autoCapture">Open the app on the phone and take the screenshot immediately (no second button press).</param>
+    public void Select(SessionInfo session, bool autoCapture = false)
+    {
+        Refresh();
+        sessions.SelectedItem = session;
+        if (autoCapture && !busy && session.Package != null)
+            Dispatcher.BeginInvoke(new Action(() => { if (model.Session?.Url == session.Url) _ = CaptureAsync(); }),
+                System.Windows.Threading.DispatcherPriority.Background);
+    }
     public bool TryLeave()
     {
         if (busy) { status.Text = "Wait for the current check-in step to finish."; return false; }
@@ -480,6 +711,7 @@ public sealed class CheckinView : UserControl, IRefreshablePage
         uploadButton.Visibility = daily ? Visibility.Collapsed : Visibility.Visible;
         captureButton.Content = daily ? "Start daily check-in and capture" : "Capture on phone";
         captureButton.IsEnabled = !busy && model.Session?.Package != null;
+        captureScreenButton.IsEnabled = !busy && model.Session != null;
         uploadButton.IsEnabled = !busy && file != null;
         confirmButton.IsEnabled = !busy && canConfirm;
     }
@@ -489,6 +721,8 @@ public sealed class CheckinView : UserControl, IRefreshablePage
         app.CancelCheckin();
         file = null;
         capturedAt = default;
+        pathBox.Text = "";
+        pathPanel.Visibility = Visibility.Collapsed;
         canConfirm = false;
         preview.Source = null;
         status.Text = "Choose a fresh screenshot with the phone clock visible.";
@@ -508,11 +742,32 @@ public sealed class CheckinView : UserControl, IRefreshablePage
     {
         file = path;
         capturedAt = when;
+        pathBox.Text = path;
+        pathPanel.Visibility = Visibility.Visible;
         preview.Source = new ImagePathConverter().Convert(path, typeof(ImageSource), "400", System.Globalization.CultureInfo.CurrentCulture) as ImageSource;
         status.Text = $"Screenshot from {when:HH:mm:ss}; age {(int)(DateTime.Now - when).TotalMinutes} min.";
         if (DateTime.Now - when > TimeSpan.FromMinutes(10))
             details.Text = "This screenshot is old. The site may reject its clock check.";
         Refresh();
+    }
+
+    private async Task CaptureScreenAsync()
+    {
+        var session = model.Session;
+        if (session == null || busy) return;
+        busy = true; status.Text = "Capturing the phone screen…"; Refresh();
+        try
+        {
+            var (path, error) = await app.Capture.CaptureNowAsync(session);
+            if (path == null) status.Text = error ?? "Couldn't capture the phone screen.";
+            else
+            {
+                SetFile(path, DateTime.Now);
+                details.Text = PageUi.CopyText(path) ? "Path copied to the clipboard." : "";
+            }
+        }
+        catch (Exception ex) { status.Text = ex.Message; }
+        finally { busy = false; Refresh(); }
     }
 
     private async Task CaptureAsync()
@@ -612,10 +867,12 @@ public sealed class AccountView : UserControl, IRefreshablePage
         body.Children.Add(email);
         body.Children.Add(PageUi.Text("Password (leave empty to keep saved password)"));
         body.Children.Add(password);
-        body.Children.Add(PageUi.Button("Save and sign in", Save));
-        body.Children.Add(PageUi.Button("Remove saved login", Remove));
-        body.Children.Add(PageUi.Button("Sign in manually", () => app.ShowManualSignIn()));
-        body.Children.Add(PageUi.Button("Done signing in", () => _ = EndManualSignInAsync()));
+        var actions = new WrapPanel { Margin = new Thickness(0, 10, 0, 0) };
+        body.Children.Add(actions);
+        actions.Children.Add(PageUi.Button("Save and sign in", Save, "success"));
+        actions.Children.Add(PageUi.Button("Remove saved login", Remove, "danger"));
+        actions.Children.Add(PageUi.Button("Sign in manually", () => app.ShowManualSignIn(), "info"));
+        actions.Children.Add(PageUi.Button("Done signing in", () => _ = EndManualSignInAsync()));
         body.Children.Add(web);
         email.Text = CredentialStore.Load()?.Email ?? "";
         Refresh();
@@ -694,39 +951,53 @@ public sealed class SettingsView : UserControl, IRefreshablePage
     {
         model.Refresh();
         body.Children.Clear();
-        body.Children.Add(PageUi.Text("Check interval (minutes)", 16));
+        StackPanel Sec(string key, string title) => PageUi.AddSection(body, app.Settings, "settings." + key, title);
+        var intervals = new WrapPanel();
+        Sec("interval", "Check interval (minutes)").Children.Add(intervals);
         foreach (var minutes in new[] { 5, 15, 30, 60 })
-            body.Children.Add(PageUi.Button($"{minutes}{(app.Settings.IntervalMinutes == minutes ? " ✓" : "")}", () =>
+            intervals.Children.Add(PageUi.Button($"{minutes}{(app.Settings.IntervalMinutes == minutes ? " ✓" : "")}", () =>
             { app.Settings.IntervalMinutes = minutes; app.Settings.Save(); app.ApplySettings(); Refresh(); }));
-        body.Children.Add(PageUi.Text("Reminder times", 16));
+        var reminders = new WrapPanel();
+        Sec("reminders", "Reminder times").Children.Add(reminders);
         foreach (var time in new[] { "09:00", "10:00", "12:00", "15:00", "18:00", "19:00", "21:00" })
-            body.Children.Add(PageUi.Button($"{time}{(app.Settings.ReminderTimes.Contains(time) ? " ✓" : "")}", () =>
+            reminders.Children.Add(PageUi.Button($"{time}{(app.Settings.ReminderTimes.Contains(time) ? " ✓" : "")}", () =>
             {
                 if (!app.Settings.ReminderTimes.Remove(time)) app.Settings.ReminderTimes.Add(time);
                 app.Settings.ReminderTimes.Sort(StringComparer.Ordinal); app.Settings.Save(); Refresh();
             }));
-        body.Children.Add(PageUi.Text("Screenshot interval (seconds)", 16));
+        var shots = new WrapPanel();
+        Sec("shots", "Screenshot interval (seconds)").Children.Add(shots);
         foreach (var seconds in new[] { 5, 10, 15, 30, 60 })
-            body.Children.Add(PageUi.Button($"{seconds}{(app.Settings.CaptureIntervalSeconds == seconds ? " ✓" : "")}", () =>
+            shots.Children.Add(PageUi.Button($"{seconds}{(app.Settings.CaptureIntervalSeconds == seconds ? " ✓" : "")}", () =>
             { app.Settings.CaptureIntervalSeconds = seconds; app.Settings.Save(); Refresh(); }));
-        body.Children.Add(PageUi.Button($"Phone checks: {(app.Settings.DeviceChecks ? "On" : "Off")}", () =>
+        var phoneSection = Sec("phone", "Phone");
+        phoneSection.Children.Add(PageUi.Button($"Phone checks: {(app.Settings.DeviceChecks ? "On" : "Off")}", () =>
         { app.Settings.DeviceChecks = !app.Settings.DeviceChecks; app.Settings.Save(); _ = app.CheckNowAsync(); Refresh(); }));
-        var adb = new TextBox { Text = app.Settings.AdbPath ?? "", MinWidth = 320, Margin = new Thickness(0, 0, 0, 8) };
-        body.Children.Add(PageUi.Text($"ADB path · Found at {app.Adb.AdbPath ?? "not found"}", 16));
-        body.Children.Add(adb);
-        body.Children.Add(PageUi.Button("Browse", () =>
+        var adb = new TextBox { Text = app.Settings.AdbPath ?? "", Tag = "Auto-detect (leave empty)", MinWidth = 320, Margin = new Thickness(0, 0, 0, 8) };
+        phoneSection.Children.Add(PageUi.Text($"ADB path · Found at {app.Adb.AdbPath ?? "not found"}"));
+        phoneSection.Children.Add(adb);
+        var adbButtons = new WrapPanel();
+        phoneSection.Children.Add(adbButtons);
+        adbButtons.Children.Add(PageUi.Button("Browse", () =>
         {
             var dialog = new Microsoft.Win32.OpenFileDialog { Filter = "adb.exe|adb.exe|Executables|*.exe" };
             if (dialog.ShowDialog(PageUi.Window) == true) adb.Text = dialog.FileName;
         }));
-        body.Children.Add(PageUi.Button("Save ADB path", async () => { app.Settings.AdbPath = adb.Text.Trim(); app.Settings.Save(); app.Adb.Configure(app.Settings.AdbPath); await app.Adb.RefreshPathAsync(); Refresh(); }));
-        body.Children.Add(PageUi.Button($"Theme: {app.Settings.Theme}", () =>
+        adbButtons.Children.Add(PageUi.Button("Save ADB path", async () => { app.Settings.AdbPath = adb.Text.Trim(); app.Settings.Save(); app.Adb.Configure(app.Settings.AdbPath); await app.Adb.RefreshPathAsync(); Refresh(); }));
+        var appButtons = new WrapPanel();
+        Sec("app", "App").Children.Add(appButtons);
+        appButtons.Children.Add(PageUi.Button($"Theme: {app.Settings.Theme}", () =>
         { app.Settings.Theme = app.Settings.Theme == "Dark" ? "Light" : "Dark"; app.Settings.Save(); ThemeManager.Apply(app.Settings.Theme); Refresh(); }));
-        body.Children.Add(PageUi.Button($"Start with Windows: {(StartupRegistration.IsEnabled ? "On" : "Off")}", () =>
+        appButtons.Children.Add(PageUi.Button($"Start with Windows: {(StartupRegistration.IsEnabled ? "On" : "Off")}", () =>
         { StartupRegistration.Set(!StartupRegistration.IsEnabled); Refresh(); }));
-        body.Children.Add(PageUi.Button($"Close to tray: {(app.Settings.CloseToTray ? "On" : "Off")}", () =>
+        appButtons.Children.Add(PageUi.Button($"Close to tray: {(app.Settings.CloseToTray ? "On" : "Off")}", () =>
         { app.Settings.CloseToTray = !app.Settings.CloseToTray; app.Settings.Save(); Refresh(); }));
-        body.Children.Add(PageUi.Button("Open data folder", () => Process.Start(new ProcessStartInfo(Settings.Dir) { UseShellExecute = true })));
-        body.Children.Add(PageUi.Button("Open log", () => Process.Start(new ProcessStartInfo(System.IO.Path.Combine(Settings.Dir, "log.txt")) { UseShellExecute = true })));
+        appButtons.Children.Add(PageUi.Button("Open data folder", () => Process.Start(new ProcessStartInfo(Settings.Dir) { UseShellExecute = true })));
+        PageUi.TintSelected(intervals);
+        PageUi.TintSelected(reminders);
+        PageUi.TintSelected(shots);
+        PageUi.TintSelected(phoneSection);
+        PageUi.TintSelected(appButtons);
+        appButtons.Children.Add(PageUi.Button("Open log", () => Process.Start(new ProcessStartInfo(System.IO.Path.Combine(Settings.Dir, "log.txt")) { UseShellExecute = true })));
     }
 }

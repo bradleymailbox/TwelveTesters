@@ -43,6 +43,27 @@ internal static class Program
         session.Package = null;
         Check(SessionCardState.From(session, snapshot).Installed == "Unknown", "Unknown package does not imply app missing");
 
+        TodoItem Todo(string key, string title, Priority priority = Priority.High) => new() { Key = key, Title = title, Priority = priority };
+        var feedback = Todo("feedback-in:4", "Read 4 feedback reports");
+        var join = Todo("join:s1", "Join the Aquatinta test");
+        var dismissals = new Dictionary<string, string> { [feedback.Key] = TodoBuilder.Fingerprint(feedback) };
+        var (visible, changed) = TodoBuilder.ApplyDismissals([feedback, join], dismissals, fullCheck: false, signedIn: true);
+        Check(visible.Count == 1 && visible[0].Key == join.Key && !changed, "Dismissed to-do stays hidden while unchanged");
+        (visible, changed) = TodoBuilder.ApplyDismissals([Todo(feedback.Key, "Read 4 feedback reports", Priority.Normal), join], dismissals, false, true);
+        Check(visible.Count == 2 && changed && dismissals.Count == 0, "Dismissed to-do returns when its priority changes");
+        dismissals[feedback.Key] = TodoBuilder.Fingerprint(feedback);
+        (visible, changed) = TodoBuilder.ApplyDismissals([Todo(feedback.Key, "Read 5 feedback reports"), join], dismissals, false, true);
+        Check(visible.Count == 2 && dismissals.Count == 0, "Dismissed to-do returns when its title changes");
+        dismissals[feedback.Key] = TodoBuilder.Fingerprint(feedback);
+        (visible, changed) = TodoBuilder.ApplyDismissals([join], dismissals, fullCheck: false, signedIn: true);
+        Check(dismissals.ContainsKey(feedback.Key) && !changed, "Dismissal survives a partial rebuild that omits the item");
+        (visible, changed) = TodoBuilder.ApplyDismissals([join], dismissals, fullCheck: true, signedIn: false);
+        Check(dismissals.ContainsKey(feedback.Key), "Dismissal survives a check where sign-in failed");
+        (visible, changed) = TodoBuilder.ApplyDismissals([join], dismissals, fullCheck: true, signedIn: true);
+        Check(dismissals.Count == 0 && changed, "Dismissal is forgotten once a full check no longer lists the item");
+        (visible, changed) = TodoBuilder.ApplyDismissals([feedback, join], dismissals, true, true);
+        Check(visible.Count == 2, "The same item reappears after it went away and came back");
+
         // Construct the window without App.OnStartup, tray services, phone access or saved data writes.
         var app = new App();
         app.InitializeComponent();

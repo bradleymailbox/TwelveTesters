@@ -18,6 +18,17 @@ Order: Step 1 → 2 → 3 → 4 → 5. Fix whatever step 2 finds before moving o
 
 ---
 
+## GUI and branding (done, uncommitted)
+- [x] App Deployer look and feel: top header (bDevStudios logo, Lilita One title, pill tabs, Check now), cards, cyan section labels
+- [x] Named "Twelve Testers Test Management" (window, product, crash dialog; exe, mutex and Run key keep `TwelveTestersTray`)
+- [x] Screenshots filed per app: `Screenshots\<App name>\...` (old session-id folders still read; clean-up now per file)
+- [x] Fixed: app dropdown showed the type name, white password box, stretched buttons, upside-down "Check now" while checking, tabs not navigating by keyboard
+- [x] Capture after install: Today card shows "Capture & check in" (Day 1) / "Check in" and starts the phone capture straight away; a new install shows a banner with "Capture screenshot" (window open) or a balloon that opens the capture (window hidden). Upload ("Check screenshot") stays a separate click. Verified on the phone with Crumbi.
+- [x] Screenshot file access: "Screenshot" button on every Today card and "Capture phone screenshot" on Check-in save to the per-app folder, copy the path to the clipboard and offer Open folder / Copy path (for the site's own upload dialog). Verified on the phone.
+- [x] Dismiss to-dos: "Dismiss" on each to-do (with Undo and "Show N dismissed"); a dismissed item returns when its title/priority changes or after it has disappeared from a full check and comes back. Saved in `settings.json` (`DismissedTodos`). Unit-tested; verified live.
+- [ ] Check-in page: preview is still large; Open folder click not exercised
+- [ ] Not yet restyled to the same polish: Testing and Check-in pages, Today swap cards (reviewed only Today/Report/Account/Settings)
+
 ## 1. Back up the data (do first)
 - [x] Nothing to copy by hand: the old `%LOCALAPPDATA%\TwelveTestersTray` stays untouched as the backup
 
@@ -36,10 +47,11 @@ Order: Step 1 → 2 → 3 → 4 → 5. Fix whatever step 2 finds before moving o
 **Found and fixed in step 2:** the hidden site browser was set `IsVisible=false`, so the site never rendered and the first check returned 0 sessions. Now a visible off-screen tool window like the old form (`Services/SiteBrowser.cs`).
 
 ## 3. One testing flow on the card (old item 20)
-- [ ] Start testing → Testing page → Stop or automatic stop
-- [ ] Follow-up panel after a run: Mark tested / Write report (this run's screenshots pre-ticked) / Check in
-- [ ] `EndedAutomatically` shows the same follow-up panel
-- [ ] Verify with the phone plugged in and unplugged, and the 45-minute automatic stop
+- [x] Start testing → Testing page; Stop (Today card or Testing page) → follow-up panel
+- [x] Follow-up panel: Mark tested / Write report / Check in / Done; Report pre-ticks this run's screenshots (max 4)
+- [x] Automatic stop: window open → Testing panel + banner (not during a check-in); balloon only if the window isn't in front
+- [x] Verified on the real phone: start opens the app, screenshots saved to `Screenshots\`, manual stop ends the run cleanly
+- [ ] Still to try by hand: click through Start → Stop → Write report (check ticks), unplug the phone mid-run (auto-stop after ~6 misses), 45-minute limit
 
 ## 4. Data safety (old item 22)
 - [ ] After a full run, the data folder is unchanged: same files, no renamed fields

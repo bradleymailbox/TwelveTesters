@@ -7,6 +7,12 @@ public class Settings
     public int IntervalMinutes { get; set; } = 15;
     public string LastEveningReminder { get; set; } = "";
     public bool DeviceChecks { get; set; } = true;
+    /// <summary>Keys of page sections the user collapsed (Today: to-do, swaps; Settings groups).</summary>
+    public List<string> CollapsedSections { get; set; } = new();
+    /// <summary>To-do items the user marked as done: item key → fingerprint (priority + title) when dismissed.
+    /// An item stays hidden until it disappears from the site or its fingerprint changes; keys already carry the
+    /// state that matters (counts, dates), so a changed key is a new item.</summary>
+    public Dictionary<string, string> DismissedTodos { get; set; } = new();
     public string? AdbPath { get; set; }
     /// <summary>Session URL → Play package name (join links disappear once a session moves on, so cache them).</summary>
     public Dictionary<string, string> PackageBySession { get; set; } = new();
@@ -126,6 +132,8 @@ public class SessionInfo
     public string MyStatus { get; set; } = "";
     public string PartnerStatus { get; set; } = "";
     public string? Package { get; set; }
+
+    public override string ToString() => App;
 
     /// <summary>Session id (also used by the check-in and feedback pages).</summary>
     public string Id => Url.TrimEnd('/').Split('/').Last();

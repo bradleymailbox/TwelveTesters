@@ -5,6 +5,26 @@ namespace TwelveTestersTray;
 /// <summary>Turns what the site (and the test phone) shows into a plain "what do I need to do" list.</summary>
 public static class TodoBuilder
 {
+    public static string Fingerprint(TodoItem t) => $"{t.Priority}|{t.Title}";
+
+    /// <summary>Hides dismissed items. A dismissal is dropped (the item may return) when the item's priority or title
+    /// changed, or — only after a full, signed-in site check — when the item is no longer produced at all, so the
+    /// same situation coming back later shows again. Returns the visible items and whether <paramref name="dismissed"/> changed.</summary>
+    public static (List<TodoItem> Visible, bool Changed) ApplyDismissals(
+        IReadOnlyList<TodoItem> all, Dictionary<string, string> dismissed, bool fullCheck, bool signedIn)
+    {
+        var changed = false;
+        foreach (var item in all)
+            if (dismissed.TryGetValue(item.Key, out var fingerprint) && fingerprint != Fingerprint(item))
+            { dismissed.Remove(item.Key); changed = true; }
+        if (fullCheck && signedIn)
+        {
+            var present = all.Select(i => i.Key).ToHashSet();
+            foreach (var key in dismissed.Keys.Where(k => !present.Contains(k)).ToList()) { dismissed.Remove(key); changed = true; }
+        }
+        return (all.Where(i => !dismissed.ContainsKey(i.Key)).ToList(), changed);
+    }
+
     public static List<TodoItem> Build(Snapshot s)
     {
         var list = new List<TodoItem>();

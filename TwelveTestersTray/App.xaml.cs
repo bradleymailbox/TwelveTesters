@@ -68,7 +68,7 @@ public partial class App : System.Windows.Application
     private static void OnDispatcherUnhandledException(object sender, DispatcherUnhandledExceptionEventArgs e)
     {
         Log.Write("Unhandled UI error: " + e.Exception);
-        System.Windows.MessageBox.Show(e.Exception.Message, "Twelve Testers Tray", MessageBoxButton.OK, MessageBoxImage.Error);
+        System.Windows.MessageBox.Show(e.Exception.Message, "Twelve Testers Test Management", MessageBoxButton.OK, MessageBoxImage.Error);
         e.Handled = true;
     }
 

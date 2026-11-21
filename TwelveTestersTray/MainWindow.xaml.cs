@@ -53,27 +53,62 @@ public partial class MainWindow : Window
         Navigate(context.Settings.LastPage);
     }
 
-    public void Navigate(string page, SessionInfo? session = null)
+    private string currentPage = "Today";
+    private bool syncingTabs;
+
+    /// <summary>Keeps the highlighted tab matching the page actually shown (also undoes a tab click that was refused).</summary>
+    private void SyncTabs()
+    {
+        syncingTabs = true;
+        foreach (var tab in new[] { Tab_Today, Tab_Testing, Tab_Report, Tab_Checkin, Tab_Account, Tab_Settings })
+            tab.IsChecked = (string)tab.Tag == currentPage;
+        syncingTabs = false;
+    }
+
+    // Checked (not Click) so arrow-key selection in the tab strip navigates too.
+    private void Tab_Checked(object sender, RoutedEventArgs e)
+    {
+        if (syncingTabs || controller == null) return;
+        var page = (string)((FrameworkElement)sender).Tag;
+        if (page != currentPage) Navigate(page);
+        SyncTabs();
+    }
+
+    public void Navigate(string page, SessionInfo? session = null, bool autoStart = false)
     {
         if (controller == null) return;
-        if (PageHost.Content is CheckinView currentCheckin && page != "Checkin" && !currentCheckin.TryLeave()) return;
+        if (PageHost.Content is CheckinView currentCheckin && page != "Checkin" && !currentCheckin.TryLeave()) { SyncTabs(); return; }
         if (PageHost.Content is AccountView currentAccount && page != "Account") currentAccount.EndManualSignIn();
         if (!pages.TryGetValue(page, out var view)) { page = "Today"; view = pages[page]; }
         PageTitle.Text = page == "Checkin" ? "Check-in" : page;
+        if (page != currentPage) NoticePanel.Visibility = Visibility.Collapsed; // a banner belongs to the page it was raised on
+        currentPage = page;
+        SyncTabs();
         PageHost.Content = view;
         controller.Settings.LastPage = page;
         controller.Settings.Save();
         if (session != null)
         {
             if (view is ReportView report) report.Select(session);
-            if (view is CheckinView checkin) checkin.Select(session);
+            if (view is CheckinView checkin) checkin.Select(session, autoStart);
         }
         Refresh();
     }
 
-    public void ShowFromTray(string page = "Today", SessionInfo? session = null)
+    /// <summary>True when the window is open, not minimised and has focus (so a balloon would be redundant).</summary>
+    public bool IsInFront => IsVisible && IsActive && WindowState != WindowState.Minimized;
+
+    /// <summary>Shows the post-run panel for a run that ended by itself, without stealing focus or yanking the
+    /// user out of a check-in in progress (they get the banner and the panel is waiting on Testing).</summary>
+    public void ShowRunEnded(SessionInfo session, string message)
     {
-        Navigate(page, session);
+        if (PageHost.Content is not CheckinView) Navigate("Testing", session);
+        ShowNotice(message);
+    }
+
+    public void ShowFromTray(string page = "Today", SessionInfo? session = null, bool autoStart = false)
+    {
+        Navigate(page, session, autoStart);
         Show();
         if (WindowState == WindowState.Minimized) WindowState = wasMaximized ? WindowState.Maximized : WindowState.Normal;
         Activate();
@@ -113,28 +148,43 @@ public partial class MainWindow : Window
             : snap?.Device is { Connected: true } phone ? "Phone: " + phone.Name
             : snap?.Device is { AdbFound: false } ? "ADB not found" : "No phone connected";
         RefreshButton.IsEnabled = !controller.IsChecking;
-        RefreshButton.Content = controller.IsChecking ? "↻ Checking…" : "↻ Check now";
+        RefreshLabel.Text = controller.IsChecking ? "Checking…" : "Check now";
         if (controller.IsChecking)
         {
-            var rotation = new System.Windows.Media.RotateTransform();
-            RefreshButton.RenderTransformOrigin = new System.Windows.Point(.5, .5);
-            RefreshButton.RenderTransform = rotation;
-            rotation.BeginAnimation(System.Windows.Media.RotateTransform.AngleProperty,
-                new System.Windows.Media.Animation.DoubleAnimation(0, 360, TimeSpan.FromSeconds(1)) { RepeatBehavior = System.Windows.Media.Animation.RepeatBehavior.Forever });
+            // Spin only the icon; the label must stay upright.
+            if (RefreshIcon.RenderTransform is not System.Windows.Media.RotateTransform { IsFrozen: false })
+            {
+                var rotation = new System.Windows.Media.RotateTransform();
+                RefreshIcon.RenderTransform = rotation;
+                rotation.BeginAnimation(System.Windows.Media.RotateTransform.AngleProperty,
+                    new System.Windows.Media.Animation.DoubleAnimation(0, 360, TimeSpan.FromSeconds(1)) { RepeatBehavior = System.Windows.Media.Animation.RepeatBehavior.Forever });
+            }
         }
-        else RefreshButton.RenderTransform = System.Windows.Media.Transform.Identity;
+        else RefreshIcon.RenderTransform = System.Windows.Media.Transform.Identity;
     }
 
-    public void ShowNotice(string message, bool confirmExit = false)
+    private Action? noticeAction;
+
+    /// <summary>Inline banner. With <paramref name="actionText"/> it also shows a button that runs <paramref name="action"/>.</summary>
+    public void ShowNotice(string message, bool confirmExit = false, string? actionText = null, Action? action = null)
     {
+        noticeAction = action;
+        NoticeActionButton.Content = actionText;
+        NoticeActionButton.Visibility = actionText != null && action != null ? Visibility.Visible : Visibility.Collapsed;
+        if (actionText != null) PageUi.Tint(NoticeActionButton, "success");
         NoticeText.Text = message;
         NoticePanel.Visibility = Visibility.Visible;
         ConfirmExitButton.Visibility = confirmExit ? Visibility.Visible : Visibility.Collapsed;
     }
+    private void NoticeAction_Click(object sender, RoutedEventArgs e)
+    {
+        var action = noticeAction;
+        NoticePanel.Visibility = Visibility.Collapsed;
+        action?.Invoke();
+    }
     private void ConfirmExit_Click(object sender, RoutedEventArgs e) => controller?.ExitApplication(true);
     private void DismissNotice_Click(object sender, RoutedEventArgs e) => NoticePanel.Visibility = Visibility.Collapsed;
 
-    private void Navigate_Click(object sender, RoutedEventArgs e) => Navigate((string)((Button)sender).Tag);
     private async void CheckNow_Click(object sender, RoutedEventArgs e)
     {
         if (controller != null) await controller.CheckNowAsync();
