@@ -1,86 +1,58 @@
 using System.Text.Json;
 using Microsoft.Web.WebView2.Core;
-using Microsoft.Web.WebView2.Wpf;
-using System.Windows.Forms.Integration;
+using System.Windows.Interop;
 
-namespace TwelveTestersTray;
+namespace TwelveTestersTray.Services;
 
-/// <summary>
-/// Hosts an embedded Edge (WebView2) browser with its own persistent profile.
-/// Normally it sits off-screen and is used to read Twelve Testers pages;
-/// when you need to sign in it is shown as a normal window.
-/// </summary>
-public class BrowserForm : Form
+/// <summary>Site automation hosted by a controller on a never-shown native window.</summary>
+public sealed class SiteBrowser : IDisposable
 {
     public const string Base = "https://www.twelvetesters.com";
-
     static readonly JsonSerializerOptions JsonOpts = new() { PropertyNameCaseInsensitive = true };
-
-    readonly WebView2 web = new();
-    readonly ElementHost browserHost = new() { Dock = DockStyle.Fill };
-    /// <summary>Only one thing drives the hidden browser at a time (background check vs. sending a report).</summary>
     readonly SemaphoreSlim busy = new(1, 1);
-
-    public bool IsSignInOpen { get; private set; }
-    public event Action? SignInWindowClosed;
-
-    public BrowserForm()
+    private Task<CoreWebView2Environment>? environmentTask;
+    public Task<CoreWebView2Environment> EnvironmentTask => environmentTask ??= CoreWebView2Environment.CreateAsync(null, Path.Combine(Settings.Dir, "WebView2"));
+    private HwndSource? host;
+    private CoreWebView2Controller? controller;
+    private CoreWebView2 core = null!;
+    private Task? initialization;
+    private bool disposed;
+    public bool IsSignInOpen { get; set; }
+    public Task InitAsync()
     {
-        Text = "Twelve Testers — sign in, then close this window";
-        StartPosition = FormStartPosition.Manual;
-        Size = new Size(1500, 950); // wide enough for the site's desktop layout
-        browserHost.Child = web;
-        Controls.Add(browserHost);
-        HideOffscreen();
-    }
-
-    public async Task InitAsync()
-    {
-        var env = await CoreWebView2Environment.CreateAsync(null, Path.Combine(Settings.Dir, "WebView2"));
-        await web.EnsureCoreWebView2Async(env);
-        // Never let a page's alert()/confirm() block the background checker.
-        web.CoreWebView2.Settings.AreDefaultScriptDialogsEnabled = false;
-        // With default dialogs off, an unanswered "Leave site?" (the check-in page sets one while its
-        // timer runs) would keep the hidden browser stuck on that page. Always leave.
-        web.CoreWebView2.ScriptDialogOpening += (_, e) =>
+        ObjectDisposedException.ThrowIf(disposed, this);
+        if (initialization?.IsFaulted == true || initialization?.IsCanceled == true)
         {
-            if (e.Kind == CoreWebView2ScriptDialogKind.Beforeunload) e.Accept();
-        };
-    }
-
-    void HideOffscreen()
-    {
-        IsSignInOpen = false;
-        FormBorderStyle = FormBorderStyle.None;
-        ShowInTaskbar = false;
-        Location = new Point(-30000, -30000);
-    }
-
-    public void ShowSignIn()
-    {
-        IsSignInOpen = true;
-        FormBorderStyle = FormBorderStyle.Sizable;
-        ShowInTaskbar = true;
-        var wa = Screen.PrimaryScreen!.WorkingArea;
-        Location = new Point(wa.Left + Math.Max(0, (wa.Width - Width) / 2), wa.Top + Math.Max(0, (wa.Height - Height) / 2));
-        web.CoreWebView2?.Settings.SetDefaultScriptDialogsEnabled(true);
-        web.CoreWebView2?.Navigate(Base + "/dashboard");
-        Activate();
-    }
-
-    protected override void OnFormClosing(FormClosingEventArgs e)
-    {
-        if (e.CloseReason == CloseReason.UserClosing)
-        {
-            e.Cancel = true;
-            web.CoreWebView2?.Settings.SetDefaultScriptDialogsEnabled(false);
-            HideOffscreen();
-            SignInWindowClosed?.Invoke();
-            return;
+            controller?.Close();
+            controller = null;
+            host?.Dispose();
+            host = null;
+            if (environmentTask?.IsFaulted == true || environmentTask?.IsCanceled == true) environmentTask = null;
+            initialization = null;
         }
-        base.OnFormClosing(e);
+        return initialization ??= InitializeAsync();
     }
-
+    private async Task InitializeAsync()
+    {
+        var environment = await EnvironmentTask;
+        if (disposed) throw new ObjectDisposedException(nameof(SiteBrowser));
+        host = new HwndSource(new HwndSourceParameters("Twelve Testers site browser")
+        { Width = 1500, Height = 950, WindowStyle = unchecked((int)0x80000000) });
+        var created = await environment.CreateCoreWebView2ControllerAsync(host.Handle);
+        if (disposed) { created.Close(); throw new ObjectDisposedException(nameof(SiteBrowser)); }
+        controller = created;
+        controller.Bounds = new System.Drawing.Rectangle(0, 0, 1500, 950);
+        controller.IsVisible = false;
+        core = controller.CoreWebView2;
+        core.Settings.AreDefaultScriptDialogsEnabled = false;
+        core.ScriptDialogOpening += (_, e) => { if (e.Kind == CoreWebView2ScriptDialogKind.Beforeunload) e.Accept(); };
+    }
+    public void Dispose()
+    {
+        disposed = true;
+        controller?.Close();
+        host?.Dispose();
+    }
     // ---------------------------------------------------------------- scraping
 
     /// <param name="getLogin">Returns saved credentials to auto-sign-in with, or null to skip.</param>
@@ -88,6 +60,7 @@ public class BrowserForm : Form
     public async Task<Snapshot> ScrapeAsync(Func<(string Email, string Password)?> getLogin,
                                             Dictionary<string, string> packageCache)
     {
+        await InitAsync();
         var snap = new Snapshot { At = DateTime.Now };
         await busy.WaitAsync();
         try
@@ -104,7 +77,7 @@ public class BrowserForm : Form
                 dash = await LoadDashboardAsync();
                 if (dash == null || !dash.LoggedIn)
                 {
-                    Log.Write("Login: accepted, but /dashboard still not signed in. URL now: " + web.Source);
+                    Log.Write("Login: accepted, but /dashboard still not signed in. URL now: " + core.Source);
                     snap.LoginError = "Logged in, but the dashboard still asks to sign in (email verification needed?).";
                     return snap;
                 }
@@ -148,7 +121,7 @@ public class BrowserForm : Form
         finally
         {
             // Park on a blank page so the site isn't kept open (and polling) in the background.
-            if (!IsSignInOpen) web.CoreWebView2?.Navigate("about:blank");
+            if (!IsSignInOpen) core?.Navigate("about:blank");
             busy.Release();
         }
     }
@@ -161,6 +134,7 @@ public class BrowserForm : Form
     /// </summary>
     public async Task<string?> SubmitFeedbackAsync(SessionInfo session, FeedbackDraft d)
     {
+        await InitAsync();
         if (IsSignInOpen) return "Close the sign-in window first.";
         await busy.WaitAsync();
         try
@@ -185,7 +159,7 @@ public class BrowserForm : Form
                 type = d.Type, severity = d.Severity, title = d.Title, description = d.Description, files
             });
 
-            await web.CoreWebView2.ExecuteScriptAsync(FeedbackFillJs.Replace("__DATA__", data));
+            await core.ExecuteScriptAsync(FeedbackFillJs.Replace("__DATA__", data));
 
             ApiLoginResult? res = null; // same {ok, message} shape
             for (int i = 0; i < 80 && res == null; i++)
@@ -217,7 +191,7 @@ public class BrowserForm : Form
         }
         finally
         {
-            if (!IsSignInOpen) web.CoreWebView2?.Navigate("about:blank");
+            if (!IsSignInOpen) core?.Navigate("about:blank");
             busy.Release();
         }
     }
@@ -236,6 +210,7 @@ public class BrowserForm : Form
     public async Task<InstallCheckResult> BeginInstallCheckinAsync(SessionInfo session, string file,
                                                                    DateTime capturedAt, bool pressJoined)
     {
+        await InitAsync();
         if (IsSignInOpen) return new() { Message = "Close the sign-in window first." };
         if (CheckinHeld) CancelInstallCheckin();
         await busy.WaitAsync();
@@ -255,7 +230,7 @@ public class BrowserForm : Form
                 lastModified = new DateTimeOffset(capturedAt).ToUnixTimeMilliseconds(),
                 pressJoined
             });
-            await web.CoreWebView2.ExecuteScriptAsync(InstallCheckinJs.Replace("__DATA__", data));
+            await core.ExecuteScriptAsync(InstallCheckinJs.Replace("__DATA__", data));
 
             InstallCheckResult? res = null;
             for (int i = 0; i < 360 && res == null; i++) // up to 90 s (upload + server-side check)
@@ -278,7 +253,7 @@ public class BrowserForm : Form
             if (keep) CheckinHeld = true; // hold the page (and the browser) until Confirm/Cancel
             else
             {
-                if (!IsSignInOpen) web.CoreWebView2?.Navigate("about:blank");
+                if (!IsSignInOpen) core?.Navigate("about:blank");
                 busy.Release();
             }
         }
@@ -296,6 +271,7 @@ public class BrowserForm : Form
     public async Task<InstallCheckResult> BeginDailyCheckinAsync(SessionInfo session,
         Func<Task<(string? File, DateTime At, string? Error)>> capture)
     {
+        await InitAsync();
         if (IsSignInOpen) return new() { Message = "Close the sign-in window first." };
         if (CheckinHeld) CancelInstallCheckin();
         await busy.WaitAsync();
@@ -331,7 +307,7 @@ public class BrowserForm : Form
                 b64 = Convert.ToBase64String(await File.ReadAllBytesAsync(file)),
                 lastModified = new DateTimeOffset(at).ToUnixTimeMilliseconds()
             });
-            await web.CoreWebView2.ExecuteScriptAsync(DailyUploadJs.Replace("__DATA__", data));
+            await core.ExecuteScriptAsync(DailyUploadJs.Replace("__DATA__", data));
 
             InstallCheckResult? res = null;
             for (int i = 0; i < 360 && res == null; i++)
@@ -372,7 +348,7 @@ public class BrowserForm : Form
             if (keep) CheckinHeld = true;
             else
             {
-                if (!IsSignInOpen) web.CoreWebView2?.Navigate("about:blank");
+                if (!IsSignInOpen) core?.Navigate("about:blank");
                 busy.Release();
             }
         }
@@ -388,10 +364,11 @@ public class BrowserForm : Form
     /// <summary>Part 2: press "Confirm check-in" and wait for "Done today". Null on success, else an error.</summary>
     public async Task<string?> ConfirmInstallCheckinAsync()
     {
+        await InitAsync();
         if (!CheckinHeld) return "Nothing to confirm — run the screenshot check again.";
         try
         {
-            await web.CoreWebView2.ExecuteScriptAsync(ConfirmCheckinJs);
+            await core.ExecuteScriptAsync(ConfirmCheckinJs);
             if (pendingDailyId != null)
             {
                 await Task.Delay(2500);
@@ -435,7 +412,7 @@ public class BrowserForm : Form
         if (!CheckinHeld) return;
         CheckinHeld = false;
         pendingDailyId = null;
-        if (!IsSignInOpen) web.CoreWebView2?.Navigate("about:blank");
+        if (!IsSignInOpen) core?.Navigate("about:blank");
         busy.Release();
     }
 
@@ -459,7 +436,7 @@ public class BrowserForm : Form
         var start = ApiLoginJs
             .Replace("__EMAIL__", JsonSerializer.Serialize(email))
             .Replace("__PASS__", JsonSerializer.Serialize(password));
-        await web.CoreWebView2.ExecuteScriptAsync(start);
+        await core.ExecuteScriptAsync(start);
 
         ApiLoginResult? res = null;
         for (int i = 0; i < 60 && res == null; i++)
@@ -523,7 +500,7 @@ public class BrowserForm : Form
 
     async Task NavigateAsync(string path)
     {
-        var core = web.CoreWebView2 ?? throw new InvalidOperationException("Browser not initialised.");
+        var core = this.core ?? throw new InvalidOperationException("Browser not initialised.");
         var tcs = new TaskCompletionSource<bool>(TaskCreationOptions.RunContinuationsAsynchronously);
         var target = Base + path;
         ulong? myId = null;
@@ -582,7 +559,7 @@ public class BrowserForm : Form
 
     async Task<T?> EvalAsync<T>(string js)
     {
-        var json = await web.CoreWebView2.ExecuteScriptAsync(js);
+        var json = await core.ExecuteScriptAsync(js);
         return JsonSerializer.Deserialize<T>(json, JsonOpts);
     }
 

@@ -53,7 +53,7 @@ public static class TodoBuilder
                 Key = $"checkins:{today}:{s.CheckinsDue}", Priority = Priority.High,
                 Title = $"{s.CheckinsDue} daily check-in{Plural(s.CheckinsDue)} due today",
                 Detail = "Open each app on your phone, then check in.",
-                Url = BrowserForm.Base + "/dashboard/check-in"
+                Url = Services.SiteBrowser.Base + "/dashboard/check-in"
             });
         }
 
@@ -170,7 +170,7 @@ public static class TodoBuilder
                 Key = $"request:{r.From}:{r.TheirApp}", Priority = Priority.Normal,
                 Title = $"Reply to {(string.IsNullOrEmpty(r.From) ? "a" : r.From + "'s")} swap request",
                 Detail = $"They want to test your app and offered {(string.IsNullOrEmpty(r.TheirApp) ? "theirs" : r.TheirApp)}. Accept or decline.",
-                Url = BrowserForm.Base + "/dashboard/requests"
+                Url = Services.SiteBrowser.Base + "/dashboard/requests"
             });
         }
 
@@ -181,7 +181,7 @@ public static class TodoBuilder
                 Key = $"feedback-in:{s.FeedbackIn}", Priority = Priority.Normal,
                 Title = $"Read {s.FeedbackIn} feedback report{Plural(s.FeedbackIn)} on your app",
                 Detail = "Testers' bug reports and notes.",
-                Url = BrowserForm.Base + "/dashboard/feedback"
+                Url = Services.SiteBrowser.Base + "/dashboard/feedback"
             });
         }
 

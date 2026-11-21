@@ -26,6 +26,7 @@
     <Using Remove="System.Windows.Forms" />
     <Using Remove="System.Drawing" />
     <Resource Include="app.ico" />
+    <Resource Include="Fonts\*.ttf" />
   </ItemGroup>
 
 </Project>

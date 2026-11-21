@@ -40,96 +40,96 @@ Suggested order: Phase 1 → 13 → Phase 2 → Phase 4 → 14–17 → Phase 5 
   - [x] `DispatcherUnhandledException` + `TaskScheduler.UnobservedTaskException` → `Log.Write`
   - Done when: launching the exe while it's in the tray brings the window to the front
 
-- [ ] **5. Settings, startup and theme services**
-  - [ ] `Services/StartupRegistration.cs` with `ValueName="TwelveTestersTray"`, `TrayArgument="--tray"`
+- [x] **5. Settings, startup and theme services**
+  - [x] `Services/StartupRegistration.cs` with `ValueName="TwelveTestersTray"`, `TrayArgument="--tray"`
         (fixes: today's Run entry has no `--tray` and points at whatever copy last ran)
-  - [ ] Keep `Settings` at `%LOCALAPPDATA%\TwelveTestersTray\settings.json` — don't rename fields
-  - [ ] New optional fields: `Theme`, `CloseToTray`, `TrayHintShown`, `WindowBounds`, `LastPage`
-  - [ ] Copy `Services/ThemeManager.cs` as is
+  - [x] Keep `Settings` at `%LOCALAPPDATA%\TwelveTestersTray\settings.json` — don't rename fields
+  - [x] New optional fields: `Theme`, `CloseToTray`, `TrayHintShown`, `WindowBounds`, `LastPage`
+  - [x] Copy `Services/ThemeManager.cs` as is
   - Done when: the existing `settings.json` loads unchanged
 
-- [ ] **6. MVVM helpers**
-  - [ ] Copy `Mvvm.cs` and the needed converters from App Deployer
-  - [ ] Add `AsyncRelayCommand` that can't run twice at once (replaces `checking`, `phoneRefreshing`, `accountOpen` flags)
+- [x] **6. MVVM helpers**
+  - [x] Copy `Mvvm.cs` and the needed converters from App Deployer
+  - [x] Add `AsyncRelayCommand` that can't run twice at once (replaces `checking`, `phoneRefreshing`, `accountOpen` flags)
 
 ---
 
 ## Phase 2 — One main window (fixes windows hiding behind others)
 
-- [ ] **7. `MainWindow` with sidebar pages** (one UserControl + view model per page)
-  - [ ] **Today** (replaces `TaskListForm` + `ReminderForm`): to-do items, then one card per swap
+- [x] **7. `MainWindow` with sidebar pages** (one UserControl + view model per page)
+  - [x] **Today** (replaces `TaskListForm` + `ReminderForm`): to-do items, then one card per swap
         (app, partner, days left, stage, installed ✓/✗, opened today ✓/✗, check-in due/done) with
         Install on phone / Start testing / Stop / Check in / Mark tested / Report / ⋯ menu
-  - [ ] **Testing** (replaces capture parts of `ReminderForm` and the `AfterTesting` MessageBox):
+  - [x] **Testing** (replaces capture parts of `ReminderForm` and the `AfterTesting` MessageBox):
         elapsed vs 45-min limit, screenshot count, live thumbnail, Stop, then Mark tested / Write report / Check in / Done
-  - [ ] **Report** (replaces `FeedbackForm`): type, severity, title, description, device line,
+  - [x] **Report** (replaces `FeedbackForm`): type, severity, title, description, device line,
         screenshot grid with max count, Add file, Submit with inline result, "Open site form instead"
-  - [ ] **Check-in** (replaces `InstallCheckinForm`, Day 1 and daily): capture/pick → preview with age →
+  - [x] **Check-in** (replaces `InstallCheckinForm`, Day 1 and daily): capture/pick → preview with age →
         Check screenshot → confidence/details → Confirm; yes/no prompts become inline warnings
-  - [ ] **Account** (replaces `AccountForm` + "Sign in manually"): email/password, Save, Remove, last status, manual sign-in
-  - [ ] **Settings** (replaces tray submenus): check interval, reminder times, screenshot interval, phone checks,
+  - [x] **Account** (replaces `AccountForm` + "Sign in manually"): email/password, Save, Remove, last status, manual sign-in
+  - [x] **Settings** (replaces tray submenus): check interval, reminder times, screenshot interval, phone checks,
         adb path (Browse + "Found at…"), theme, Start with Windows, close to tray, Open data folder, Open log
   - Done when: none of the old Form classes remain
 
-- [ ] **8. Sign-in browser and hidden site browser**
-  - [ ] `Services/SiteBrowser.cs`: one `CoreWebView2Environment` (user data folder unchanged:
+- [x] **8. Sign-in browser and hidden site browser**
+  - [x] `Services/SiteBrowser.cs`: one `CoreWebView2Environment` (user data folder unchanged:
         `%LOCALAPPDATA%\TwelveTestersTray\WebView2`), controller on a never-shown `HwndSource`, bounds 1500×950
-  - [ ] Move unchanged from `BrowserForm`: `ScrapeAsync`, `SubmitFeedbackAsync`, `BeginInstallCheckinAsync`,
+  - [x] Move unchanged from `BrowserForm`: `ScrapeAsync`, `SubmitFeedbackAsync`, `BeginInstallCheckinAsync`,
         `BeginDailyCheckinAsync`, `ConfirmInstallCheckinAsync`, `CancelInstallCheckin`, `busy` semaphore, dialog handlers
-  - [ ] Visible sign-in: WPF `WebView2` on the Account page using the same environment (shared cookies);
+  - [x] Visible sign-in: WPF `WebView2` on the Account page using the same environment (shared cookies);
         "Done signing in" runs a check
-  - [ ] Don't place banners/toasts over the WebView2 area (WPF can't draw on top of it)
+  - [x] Don't place banners/toasts over the WebView2 area (WPF can't draw on top of it)
   - Done when: no off-screen window exists; manual sign-in happens in the main window
 
-- [ ] **9. Remove TopMost and MessageBoxes**
-  - [ ] Delete every `TopMost = true` (`AccountForm`, `ReminderForm`)
-  - [ ] Replace ~15 `MessageBox.Show` calls with inline banners (info/success/warning/error) or inline confirm bars
-  - [ ] Any remaining dialog (file picker) gets `Owner = MainWindow`
+- [x] **9. Remove TopMost and MessageBoxes**
+  - [x] Delete every `TopMost = true` (`AccountForm`, `ReminderForm`)
+  - [x] Replace ~15 `MessageBox.Show` calls with inline banners (info/success/warning/error) or inline confirm bars
+  - [x] Any remaining dialog (file picker) gets `Owner = MainWindow`
   - Done when: `MessageBox.Show` only appears in the global crash handler
 
-- [ ] **10. One way to bring the window forward**
-  - [ ] `MainWindow.ShowFromTray(page, session)`: Show, restore, Activate, Topmost on/off, Focus, navigate
-  - [ ] Used by tray click, balloon click, second launch, reminders and new-install detection
-  - [ ] Replace `balloonAction` with a stored (page, session) target
+- [x] **10. One way to bring the window forward**
+  - [x] `MainWindow.ShowFromTray(page, session)`: Show, restore, Activate, Topmost on/off, Focus, navigate
+  - [x] Used by tray click, balloon click, second launch, reminders and new-install detection
+  - [x] Replace `balloonAction` with a stored (page, session) target
 
-- [ ] **11. Close to tray**
-  - [ ] Copy App Deployer's `OnClosing`: hide + one-time "Still running in the tray" balloon, or exit if turned off
-  - [ ] `ExitApplication()` warns inline if a capture or report is running, then does today's `Exit()` clean-up
+- [x] **11. Close to tray**
+  - [x] Copy App Deployer's `OnClosing`: hide + one-time "Still running in the tray" balloon, or exit if turned off
+  - [x] `ExitApplication()` warns inline if a capture or report is running, then does today's `Exit()` clean-up
 
-- [ ] **12. Simpler tray menu** (copy `TrayIcon.cs` structure)
-  - [ ] Open (bold), Today, Testing (while capturing), Check now, Test next app, Open Twelve Testers website, Exit
-  - [ ] Remove the feedback / interval / reminder / screenshot / login submenus
-  - [ ] Keep the tooltip status text (trimmed to the NotifyIcon limit)
+- [x] **12. Simpler tray menu** (copy `TrayIcon.cs` structure)
+  - [x] Open (bold), Today, Testing (while capturing), Check now, Test next app, Open Twelve Testers website, Exit
+  - [x] Remove the feedback / interval / reminder / screenshot / login submenus
+  - [x] Keep the tooltip status text (trimmed to the NotifyIcon limit)
 
 ---
 
 ## Phase 3 — Polished look
 
-- [ ] **13. Theme**
-  - [ ] Copy `Themes/Theme.xaml`, `Dark.xaml`, `Light.xaml` and `Fonts/` (with licence files); fix the `local:` namespace
-  - [ ] Use `WindowBackground`, `Card`, `Chip`, `PrimaryGradient`, Success/Warning/Error brushes
-  - [ ] No hex colours in views — `DynamicResource` only
+- [x] **13. Theme**
+  - [x] Copy `Themes/Theme.xaml`, `Dark.xaml`, `Light.xaml` and `Fonts/` (with licence files); fix the `local:` namespace
+  - [x] Use `WindowBackground`, `Card`, `Chip`, `PrimaryGradient`, Success/Warning/Error brushes
+  - [x] No hex colours in views — `DynamicResource` only
 
-- [ ] **14. Status header** on every page
-  - [ ] Signed in / "Login needed" chip, credits, due today, check-ins due, feedback in, requests in
-  - [ ] Phone: model connected / no phone / adb not found
-  - [ ] "Checked n min ago" + refresh button (spins while checking)
+- [x] **14. Status header** on every page
+  - [x] Signed in / "Login needed" chip, credits, due today, check-ins due, feedback in, requests in
+  - [x] Phone: model connected / no phone / adb not found
+  - [x] "Checked n min ago" + refresh button (spins while checking)
 
-- [ ] **15. App cards**
-  - [ ] State colours, stage chips (Setup → Day 1 check-in → Daily → Done today)
-  - [ ] Today's latest capture thumbnail
-  - [ ] "Package unknown" hint; Install/Play actions disabled until known
+- [x] **15. App cards**
+  - [x] State colours, stage chips (Setup → Day 1 check-in → Daily → Done today)
+  - [x] Today's latest capture thumbnail
+  - [x] "Package unknown" hint; Install/Play actions disabled until known
 
-- [ ] **16. Loading / empty / error states in the window**
-  - [ ] First check: placeholder list
-  - [ ] Signed out / login failed: card with Fix login (keep the no-retry rule to avoid lockouts)
-  - [ ] WebView2 runtime missing: card with download link
-  - [ ] adb not found / no device: card with adb path + Retry
-  - [ ] Nothing to do: "All done for today ✓"
+- [x] **16. Loading / empty / error states in the window**
+  - [x] First check: placeholder list
+  - [x] Signed out / login failed: card with Fix login (keep the no-retry rule to avoid lockouts)
+  - [x] WebView2 runtime missing: card with download link
+  - [x] adb not found / no device: card with adb path + Retry
+  - [x] Nothing to do: "All done for today ✓"
 
-- [ ] **17. Window position**
-  - [ ] Save/restore size, position, state in `Settings.WindowBounds`; clamp to a visible monitor
-  - [ ] Set a minimum window size
+- [x] **17. Window position**
+  - [x] Save/restore size, position, state in `Settings.WindowBounds`; clamp to a visible monitor
+  - [x] Set a minimum window size
 
 ---
 
@@ -143,12 +143,12 @@ Suggested order: Phase 1 → 13 → Phase 2 → Phase 4 → 14–17 → Phase 5 
   - [ ] Keep `TodoBuilder`, `CredentialStore`, `Log` (just move into `Services/` / `Models/`)
   - [ ] Replace `app:` URLs in `TodoItem.Url` with `enum TodoAction { OpenUrl, Test, Account, SignIn, InstallCheckin, DailyCheckin }` + session
 
-- [ ] **19. Phone services**
-  - [ ] `DeviceChecker` → `Services/AdbService.cs` (instance class holding the adb path)
-  - [ ] `CaptureManager` → `Services/`
-  - [ ] Use App Deployer's `ProcessRunner` pattern (timeouts, output capture)
-  - [ ] Same adb search order as App Deployer
-  - [ ] All adb calls stay off the UI thread
+- [x] **19. Phone services**
+  - [x] `DeviceChecker` → `Services/AdbService.cs` (instance class holding the adb path)
+  - [x] `CaptureManager` → `Services/`
+  - [x] Use App Deployer's `ProcessRunner` pattern (timeouts, output capture)
+  - [x] Same adb search order as App Deployer
+  - [x] All adb calls stay off the UI thread
 
 - [ ] **20. One testing flow on the card**
   - [ ] Start testing → Testing page → Stop or automatic stop → Mark tested / Write report (this run's screenshots pre-ticked) / Check in

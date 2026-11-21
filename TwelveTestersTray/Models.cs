@@ -20,6 +20,11 @@ public class Settings
     public int CaptureIntervalSeconds { get; set; } = 10;
     /// <summary>Date (yyyy-MM-dd) → session URLs you confirmed you tested that day.</summary>
     public Dictionary<string, List<string>> TestedLog { get; set; } = new();
+    public string Theme { get; set; } = "Dark";
+    public bool CloseToTray { get; set; } = true;
+    public bool TrayHintShown { get; set; }
+    public WindowBounds? WindowBounds { get; set; }
+    public string LastPage { get; set; } = "Today";
 
     public HashSet<string> ConfirmedOn(DateTime day) =>
         TestedLog.TryGetValue(day.ToString("yyyy-MM-dd"), out var l) ? l.ToHashSet() : new();
@@ -65,6 +70,15 @@ public class Settings
         }
         catch { /* settings are a convenience; ignore write failures */ }
     }
+}
+
+public sealed class WindowBounds
+{
+    public double Left { get; set; }
+    public double Top { get; set; }
+    public double Width { get; set; }
+    public double Height { get; set; }
+    public bool Maximized { get; set; }
 }
 
 public class SessionInfo

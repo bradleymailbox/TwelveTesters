@@ -1,5 +1,6 @@
 using System.Windows;
 using System.Windows.Threading;
+using TwelveTestersTray.Services;
 
 namespace TwelveTestersTray;
 
@@ -30,15 +31,20 @@ public partial class App : System.Windows.Application
 
         base.OnStartup(e);
 
+        var settings = Settings.Load();
+        ThemeManager.Apply(settings.Theme);
+        try { StartupRegistration.RepairExisting(); }
+        catch (Exception ex) { Log.Write("Startup registration repair failed: " + ex.Message); }
+
         var window = new MainWindow();
         MainWindow = window;
         tray = new TrayContext();
-        window.ShowTaskListRequested += tray.ShowTaskList;
+        window.Attach(tray);
 
         showRegistration = ThreadPool.RegisterWaitForSingleObject(showEvent,
             (_, _) =>
             {
-                Dispatcher.BeginInvoke(window.ShowFromTray);
+                Dispatcher.BeginInvoke(() => window.ShowFromTray());
             }, null, Timeout.Infinite, false);
 
         if (!e.Args.Any(a => a.Equals("--tray", StringComparison.OrdinalIgnoreCase)))

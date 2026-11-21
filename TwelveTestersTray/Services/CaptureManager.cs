@@ -1,6 +1,6 @@
 using System.Security.Cryptography;
 
-namespace TwelveTestersTray;
+namespace TwelveTestersTray.Services;
 
 public class CaptureRun
 {
@@ -9,6 +9,7 @@ public class CaptureRun
     public DateTime Started { get; init; } = DateTime.Now;
     public int Count { get; set; }
     public bool Running { get; set; }
+    public DateTime? Ended { get; set; }
     public string? Problem { get; set; }
     internal CancellationTokenSource Cts { get; } = new();
 }
@@ -19,7 +20,7 @@ public class CaptureRun
 /// </summary>
 public class CaptureManager
 {
-    readonly Func<string?> adbPath;
+    readonly AdbService adb;
     readonly Func<int> intervalSeconds;
     readonly SynchronizationContext? ui;
 
@@ -33,9 +34,9 @@ public class CaptureManager
     /// <summary>Raised (on the UI thread) when a run ends by itself (time limit / phone gone).</summary>
     public event Action<CaptureRun>? EndedAutomatically;
 
-    public CaptureManager(Func<string?> adbPath, Func<int> intervalSeconds)
+    public CaptureManager(AdbService adb, Func<int> intervalSeconds)
     {
-        this.adbPath = adbPath;
+        this.adb = adb;
         this.intervalSeconds = intervalSeconds;
         ui = SynchronizationContext.Current;
     }
@@ -72,7 +73,7 @@ public class CaptureManager
         if (s.Package == null) return "Don't know this app's package name yet — run Check now.";
         Stop(); // one phone, one run at a time
 
-        var err = await DeviceChecker.LaunchAsync(adbPath(), s.Package);
+        var err = await adb.LaunchAsync(s.Package);
         if (err != null) return err;
 
         var run = new CaptureRun
@@ -93,6 +94,7 @@ public class CaptureManager
     {
         if (Current is not { Running: true } run) return;
         run.Running = false;
+        run.Ended = DateTime.Now;
         run.Cts.Cancel();
         Log.Write($"Testing stopped: {run.Session.App}, {run.Count} screenshots");
         Raise(Changed, run);
@@ -101,7 +103,7 @@ public class CaptureManager
     /// <summary>Takes one screenshot right now (whatever is on screen) for this app.</summary>
     public async Task<(string? file, string? error)> CaptureNowAsync(SessionInfo s)
     {
-        var bytes = await Task.Run(() => DeviceChecker.ScreencapAsync(adbPath()));
+        var bytes = await adb.ScreencapAsync();
         if (bytes == null) return (null, "Couldn't capture with the clock showing — is the phone connected and unlocked?");
         var folder = IsRunning(s) ? Current!.Folder : Path.Combine(FolderFor(s), "manual");
         Directory.CreateDirectory(folder);
@@ -128,7 +130,7 @@ public class CaptureManager
                     break;
                 }
 
-                var fg = await Task.Run(() => DeviceChecker.ForegroundAsync(adbPath()), token);
+                var fg = await adb.ForegroundAsync(token);
                 if (fg == null && ++misses >= 6)
                 {
                     run.Problem = "Phone disconnected or locked — testing stopped.";
@@ -139,7 +141,7 @@ public class CaptureManager
                 // Contains(): web apps (TWAs like CartaScore) show in a Chrome window but run in the app's own task.
                 if (fg != null && fg.Contains(run.Session.Package!))
                 {
-                    var bytes = await Task.Run(() => DeviceChecker.ScreencapAsync(adbPath()), token);
+                    var bytes = await adb.ScreencapAsync(token);
                     if (bytes != null)
                     {
                         var hash = SHA1.HashData(bytes);
@@ -166,6 +168,7 @@ public class CaptureManager
         if (run.Running)
         {
             run.Running = false;
+            run.Ended = DateTime.Now;
             Log.Write($"Testing ended automatically: {run.Session.App}, {run.Count} screenshots. {run.Problem}");
             Raise(Changed, run);
             Raise(EndedAutomatically, run);
