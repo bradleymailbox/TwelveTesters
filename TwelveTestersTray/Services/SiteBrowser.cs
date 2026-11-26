@@ -96,7 +96,13 @@ public sealed class SiteBrowser : IDisposable
             snap.FeedbackIn = dash.FeedbackIn ?? 0;
 
             if (await LoadAsync("/dashboard/sessions") == "ready")
+            {
                 snap.Sessions = await EvalAsync<List<SessionInfo>>(SessionsJs) ?? new();
+                var list = await EvalAsync<CheckinList>(SessionsCheckinJs);
+                snap.SiteCheckinDue = list?.Due.ToHashSet() ?? new();
+                snap.SiteCheckinDone = list?.Done.ToHashSet() ?? new();
+                snap.CheckinsDue = snap.SiteCheckinDue.Count;
+            }
 
             // Work out which Play package each session is for (needed for phone checks).
             foreach (var x in snap.Sessions)
@@ -105,22 +111,15 @@ public sealed class SiteBrowser : IDisposable
                 if (!Uri.TryCreate(x.Url, UriKind.Absolute, out var u)) continue;
                 if (await LoadAsync(u.AbsolutePath) != "ready") continue;
                 x.Package = await EvalAsync<string?>(PackageJs);
+                // The redesigned session page has no Play link; the check-in start page does.
+                if (string.IsNullOrEmpty(x.Package) && await LoadAsync("/dashboard/check-in/today?start=" + x.Id) == "ready")
+                    x.Package = await EvalAsync<string?>(PackageJs);
                 if (!string.IsNullOrEmpty(x.Package)) packageCache[x.Url] = x.Package!;
                 Log.Write($"Session {x.App}: package {x.Package ?? "(not found)"}");
             }
 
             if (await LoadAsync("/dashboard/requests") == "ready")
                 snap.Requests = await EvalAsync<List<RequestInfo>>(RequestsJs) ?? new();
-
-            if (await LoadAsync("/dashboard/check-in") == "ready")
-            {
-                var list = await EvalAsync<CheckinList>(CheckinListJs);
-                snap.SiteCheckinDue = list?.Due.ToHashSet() ?? new();
-                snap.SiteCheckinDone = list?.Done.ToHashSet() ?? new();
-                snap.CheckinsDue = list != null && (list.Due.Count + list.Done.Count) > 0
-                    ? list.Due.Count
-                    : await EvalAsync<int?>(CheckinJs) ?? 0;
-            }
 
             return snap;
         }
@@ -287,13 +286,13 @@ public sealed class SiteBrowser : IDisposable
             if (await DailyStateAsync(session.Id) == "done")
                 return new() { Stage = "done", Message = "Already checked in on the site today." };
 
-            if (await LoadAsync("/dashboard/check-in/" + session.Id) == "login")
+            if (await LoadAsync("/dashboard/check-in/today?start=" + session.Id) == "login")
                 return new() { Message = "Not signed in to Twelve Testers." };
 
             var start = await EvalAsync<string>(StartDailyJs);
             Log.Write($"Daily check-in: {session.App}, start={start}");
             if (start == "no-button")
-                return new() { Message = "Couldn't find \"All good — screenshot check-in\" on the check-in page (the site may have changed)." };
+                return new() { Message = "Couldn't find \"Start screenshot check-in\" on the check-in page (the site may have changed)." };
 
             bool ready = false;
             for (int i = 0; i < 40 && !ready; i++)
@@ -363,8 +362,10 @@ public sealed class SiteBrowser : IDisposable
     /// <summary>"done", "due" or "missing" for one session on the check-in list (navigates there).</summary>
     async Task<string> DailyStateAsync(string sessionId)
     {
-        if (await LoadAsync("/dashboard/check-in") != "ready") return "missing";
-        return await EvalAsync<string>(CheckinRowJs.Replace("__ID__", JsonSerializer.Serialize(sessionId))) ?? "missing";
+        if (await LoadAsync("/dashboard/sessions") != "ready") return "missing";
+        var list = await EvalAsync<CheckinList>(SessionsCheckinJs);
+        if (list == null) return "missing";
+        return list.Done.Contains(sessionId) ? "done" : list.Due.Contains(sessionId) ? "due" : "missing";
     }
 
     /// <summary>Part 2: press "Confirm check-in" and wait for "Done today". Null on success, else an error.</summary>
@@ -643,7 +644,7 @@ public sealed class SiteBrowser : IDisposable
           const num = re => { const m = t.match(re); return m ? parseInt(m[1], 10) : null; };
           return {
             credits:    num(/(\d+)\s*\n\s*credits/i),
-            dueToday:   num(/(\d+)\s+still due today/i),
+            dueToday:   num(/(\d+)\s*\n\s*Apps to check in/i) ?? num(/(\d+)\s+still due today/i),
             feedbackIn: num(/(\d+)\s*\n\s*Feedback in/i),
             requestsIn: num(/(\d+)\s*\n\s*Requests in/i),
             // textContent (not innerText) so it works even when the menu is collapsed/hidden.
@@ -654,21 +655,55 @@ public sealed class SiteBrowser : IDisposable
         })()
         """;
 
+    // Site redesign: one <article class="sc-row"> per session (two links inside: the card and a "›").
     const string SessionsJs = """
-        (() => [...document.querySelectorAll('main a[href*="/dashboard/sessions/"]')].map(a => {
-          const l = a.innerText.split('\n').map(s => s.trim()).filter(Boolean);
-          const yi = l.findIndex(x => /^You test$/i.test(x));
-          const ti = l.findIndex((x, i) => i > yi + 2 && / tests$/i.test(x));
-          return {
-            url: a.href,
-            partner: (l[0] || '').replace(/^Swap with\s*/i, ''),
-            daysLeft: l.find(x => /days? left|ended|complete/i.test(x)) || '',
-            state: l.find(x => /^[A-Z]{4,}$/.test(x)) || '',
-            app: yi >= 0 ? (l[yi + 1] || '') : '',
-            myStatus: yi >= 0 ? (l[yi + 2] || '') : '',
-            partnerStatus: ti >= 0 ? (l[ti + 2] || '') : ''
-          };
-        }))()
+        (() => {
+          const out = [], seen = new Set();
+          for (const art of document.querySelectorAll('main article.sc-row')) {
+            const a = art.querySelector('a[href*="/dashboard/sessions/"]');
+            if (!a || seen.has(a.href)) continue;
+            seen.add(a.href);
+            const l = art.innerText.split('\n').map(s => s.trim()).filter(Boolean);
+            const di =l.findIndex(x => /^Day \d+ of \d+/i.test(x));
+            const iy = l.indexOf('You'), it = l.indexOf('Them');
+            const block = (from, to) => from < 0 ? [] : l.slice(from + 1, to > from ? to : undefined).filter(x => x.length > 2);
+            const mine = block(iy, it), theirs = block(it, -1);
+            const due = !!art.querySelector('a[href*="/dashboard/check-in/today?start="]');
+            let my = mine[0] || '';
+            if (/Join the test/i.test(mine.join(' '))) my = 'Join the test';
+            else if (/Get started/i.test(mine.join(' '))) my = 'Get started';
+            else if (due || /^not checked in/i.test(my)) my = 'Check in today';
+            out.push({
+              url: a.href,
+              app: l[0] || '',
+              daysLeft: di >= 0 ? l[di] : '',
+              partner: di >= 0 ? (l[di + 1] || '') : '',
+              state: '',
+              myStatus: my,
+              partnerStatus: /Get started/i.test(theirs.join(' ')) ? 'Get started' : (theirs[0] || '')
+            });
+          }
+          return out;
+        })()
+        """;
+
+    // Per-session check-in state, read from the same session cards: due = has a "Check in today" link,
+    // done = "You" block says "Checked in today".
+    const string SessionsCheckinJs = """
+        (() => {
+          const due = [], done = [];
+          for (const art of document.querySelectorAll('main article.sc-row')) {
+            const a = art.querySelector('a[href*="/dashboard/sessions/"]');
+            if (!a) continue;
+            const id = a.getAttribute('href').split('?')[0].split('/').filter(Boolean).pop();
+            const l = art.innerText.split('\n').map(s => s.trim()).filter(Boolean);
+            const iy = l.indexOf('You'), it = l.indexOf('Them');
+            const mine = iy < 0 ? '' : l.slice(iy + 1, it > iy ? it : undefined).join(' ');
+            if (art.querySelector('a[href*="/dashboard/check-in/today?start="]')) { if (!due.includes(id)) due.push(id); }
+            else if (/^checked in/i.test(mine.trim()) || /(^|\s)Checked in today/i.test(mine) && !/Not checked in/i.test(mine)) { if (!done.includes(id)) done.push(id); }
+          }
+          return { due, done };
+        })()
         """;
 
     const string RequestsJs = """
@@ -845,31 +880,6 @@ public sealed class SiteBrowser : IDisposable
         })()
         """;
 
-    // Daily check-in list: per-session state from the row links ("Check in" = due, "Your check-in" = done).
-    const string CheckinListJs = """
-        (() => {
-          const due = new Set(), done = new Set();
-          for (const a of document.querySelectorAll('main a[href*="/dashboard/check-in/"]')) {
-            const id = a.getAttribute('href').split('?')[0].split('/').filter(Boolean).pop();
-            const t = (a.innerText || '').trim();
-            if (/^check in$/i.test(t)) due.add(id);
-            else if (/^your check-in$/i.test(t)) done.add(id);
-          }
-          return { due: [...due], done: [...done] };
-        })()
-        """;
-
-    const string CheckinRowJs = """
-        (() => {
-          const id = __ID__;
-          const links = [...document.querySelectorAll('main a[href*="/dashboard/check-in/"]')]
-            .filter(a => a.getAttribute('href').split('?')[0].split('/').filter(Boolean).pop() === id);
-          if (links.some(a => /^your check-in$/i.test((a.innerText || '').trim()))) return 'done';
-          if (links.some(a => /^check in$/i.test((a.innerText || '').trim()))) return 'due';
-          return 'missing';
-        })()
-        """;
-
     const string StartDailyJs = """
         (() => {
           const m = document.querySelector('main');
@@ -878,7 +888,7 @@ public sealed class SiteBrowser : IDisposable
           const bs = [...m.querySelectorAll('button')];
           const again = bs.find(b => /^Try another screenshot$/i.test((b.innerText || '').trim()));
           if (again) { again.click(); return 'retry'; } // an earlier unconfirmed upload is still showing
-          const b = bs.find(b => /All good/i.test(b.innerText || ''));
+          const b = bs.find(b => /Start screenshot check-in|All good/i.test(b.innerText || ''));
           if (!b) return 'no-button';
           b.click();
           return 'clicked';
